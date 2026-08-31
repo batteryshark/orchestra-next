@@ -49,7 +49,7 @@ def _dependencies(con, run_id: int) -> tuple[str | None, str | None]:
     return None, None
 
 
-def _runway_hold(con, source_id: str | None) -> str | None:
+def runway_hold(con, source_id: str | None) -> str | None:
     if not source_id:
         return None
     row = con.execute(
@@ -114,7 +114,7 @@ def admit(con) -> dict:
             if reason is None and paused:
                 reason = "fleet paused"
             if reason is None:
-                reason = _runway_hold(con, run["runway_source_id"])
+                reason = runway_hold(con, run["runway_source_id"])
             if reason is None and global_limit is not None and \
                     global_active >= global_limit:
                 reason = f"global capacity {global_active}/{global_limit}"

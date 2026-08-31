@@ -129,8 +129,9 @@ class ResultShapeTests(unittest.TestCase):
                         "provider", "remaining", "unit", "resets_at", "raw",
                         "as_of", "reason", "kind", "stale", "windows"})
                     names.append(got.provider)
-        self.assertEqual(sorted(names),
-                         ["claude", "codex", "deepseek", "kimi", "minimax", "xai"])
+        self.assertEqual(
+            sorted(names),
+            ["claude", "codex", "deepseek", "kimi", "minimax", "xai", "zai"])
         self.assertEqual(len(names), len(set(names)))
 
     def test_provider_kind_splits_subscriptions_from_metered_apis(self) -> None:
@@ -223,6 +224,46 @@ class DeepSeekTests(unittest.TestCase):
                 got = runway.parse_deepseek(data)
                 self.assertFalse(got.known)
                 self.assertTrue(got.reason)
+
+class ZaiTests(unittest.TestCase):
+    """Recorded from the live endpoint on 2026-08-30; the wallet behind
+    per-token Z.ai billing, which reports no window."""
+
+    OK = {"code": 200, "msg": "Operation successful", "success": True,
+          "data": {"accountList": [{"customerId": 7921757482444866,
+                                    "balance": 15.932105660, "type": 10,
+                                    "enableStatus": "ENABLE",
+                                    "frozenBalance": 0.0}],
+                   "totalBalance": 15.932105660, "isKa": False}}
+
+    def test_wallet_balance_is_the_runway(self) -> None:
+        got = runway.parse_zai(self.OK)
+        self.assertTrue(got.known)
+        self.assertEqual((got.provider, got.remaining, got.unit),
+                         ("zai", 15.932105660, "USD"))
+        self.assertIsNone(got.resets_at)  # a prepaid wallet has no window
+        self.assertEqual((got.kind, got.windows), ("api", []))
+
+    def test_missing_and_garbage_shapes_are_unknown(self) -> None:
+        cases = {
+            "empty": {},
+            "no accounts": {"data": {"accountList": []}},
+            "nonnumeric total": {"data": {"totalBalance": "abc",
+                                          "accountList": [{}]}},
+        }
+        for label, data in cases.items():
+            with self.subTest(label):
+                got = runway.parse_zai(data)
+                self.assertFalse(got.known)
+                self.assertTrue(got.reason)
+
+    def test_an_account_without_its_customer_id_says_so(self) -> None:
+        """The key authenticates but does not identify the account, so the
+        source config has to carry the customer id."""
+        got = runway.zai({})
+        self.assertFalse(got.known)
+        self.assertIn("customer_id", got.reason)
+
 
 class KimiTests(unittest.TestCase):
     def test_both_the_burst_window_and_the_plan_quota_are_reported(self) -> None:

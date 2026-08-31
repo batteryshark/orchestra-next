@@ -153,9 +153,9 @@ def build_cmd(profile: dict, *, workdir: str, title: str, prompt: str,
     model = profile.get("model")
     extra = list(profile.get("extra_args", []))
     # DESIGN §5: declared read-only directories outside the worktree.
-    # claude/codex/reasonix take --add-dir; `opencode run` has no such flag
-    # and would die on an unknown one. ponytail: an OpenCode run simply does
-    # not get them -- revisit when opencode grows a directory flag.
+    # claude/codex/reasonix take --add-dir; `opencode run` and `pi` have no
+    # such flag and would die on an unknown one. ponytail: those runs simply
+    # do not get them -- revisit when either grows a directory flag.
     declared = profile.get("add_dirs", [])
     add_dirs = [arg for d in declared for arg in ("--add-dir", d)]
     if declared and backend not in ADD_DIR_BACKENDS:
@@ -246,6 +246,26 @@ def build_cmd(profile: dict, *, workdir: str, title: str, prompt: str,
                      "--allowedTools", "Bash Edit Write Read Glob Grep WebFetch"]
         return cmd + extra
 
+    if backend == "pi":
+        # pi has no working-directory flag; the supervisor already starts it
+        # with cwd=workdir. `--` ends option parsing so a brief that opens
+        # with a dash is a message, not a flag.
+        cmd = ["pi", "-p", "--mode", "json"]
+        if model:
+            cmd += ["--model", model]  # "provider/id" is accepted here
+        if profile.get("thinking") or profile.get("effort"):
+            cmd += ["--thinking",
+                    str(profile.get("thinking") or profile["effort"])]
+        tools = profile.get("tools")
+        if tools:
+            cmd += ["-t", ",".join(tools) if isinstance(tools, (list, tuple))
+                    else str(tools)]
+        if resume_ref:
+            cmd += ["--session", resume_ref]
+        else:
+            cmd += ["--name", title]
+        return cmd + add_dirs + extra + ["--", prompt]
+
     if backend == "reasonix":
         cmd = ["reasonix", "run", "--dir", workdir,
                "--output-format", "stream-json"]
@@ -308,9 +328,14 @@ def parse_log(log_path: str, max_bytes: int | None = None) -> tuple[str | None, 
                 except ValueError:
                     continue
                 if session is None:
-                    refs = _dig(obj, SESSION_KEYS)
-                    if refs:
-                        session = refs[0]
+                    # pi's first line is its whole session header; `id` is too
+                    # common a key to dig for, so it is read from that shape.
+                    if obj.get("type") == "session" and isinstance(obj.get("id"), str):
+                        session = obj["id"]
+                    else:
+                        refs = _dig(obj, SESSION_KEYS)
+                        if refs:
+                            session = refs[0]
                 # claude-code result event
                 if obj.get("type") == "result" and isinstance(obj.get("result"), str):
                     last_text = obj["result"]
@@ -415,8 +440,35 @@ def _usage_opencode(obj):
             _num(part.get("cost")), _num(cache.get("read")), _num(cache.get("write")))
 
 
+def _usage_pi(obj):
+    """pi ``--mode json``: every assistant ``message_end`` carries that API
+    call's own usage, so the run total is their sum. ``input`` EXCLUDES the
+    cache counters (pi computes ``totalTokens`` as input + output + cacheRead
+    + cacheWrite). ``message_start``/``turn_end``/``agent_end`` repeat the
+    same message objects, so only ``message_end`` is read."""
+    if obj.get("type") != "message_end":
+        return None
+    message = obj.get("message")
+    if not isinstance(message, dict) or message.get("role") != "assistant":
+        return None
+    usage = message.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    cache_read, cache_write = _num(usage.get("cacheRead")), _num(usage.get("cacheWrite"))
+    tin = _sum(usage.get("input"), cache_read, cache_write)
+    tout = _sum(usage.get("output"))
+    if tin is None and tout is None:
+        return None
+    total = _num(usage.get("totalTokens"))
+    cost = usage.get("cost")
+    return (tin, tout, total if total is not None else _sum(tin, tout),
+            _num(cost.get("total")) if isinstance(cost, dict) else None,
+            cache_read, cache_write)
+
+
 USAGE_PARSERS = {"claude": _usage_claude, "codex": _usage_codex,
-                 "opencode": _usage_opencode, "reasonix": _usage_reasonix}
+                 "opencode": _usage_opencode, "pi": _usage_pi,
+                 "reasonix": _usage_reasonix}
 
 
 def parse_usage(log_path: str, backend: str, model: str | None = None) -> dict:
@@ -541,6 +593,17 @@ def parse_failure(log_path: str) -> str | None:
                         obj = json.loads(line)
                     except ValueError:
                         continue
+                    # pi never exits non-zero and emits no error event: a
+                    # dead run is an assistant message with stopReason
+                    # "error", and its last retry carries `finalError`.
+                    final = obj.get("finalError")
+                    if isinstance(final, str) and final.strip():
+                        error = final.strip()
+                    message = obj.get("message")
+                    if isinstance(message, dict):
+                        detail = message.get("errorMessage")
+                        if isinstance(detail, str) and detail.strip():
+                            error = detail.strip()
                     if obj.get("type") in ("error", "turn.failed"):
                         message = obj.get("message")
                         if not isinstance(message, str):

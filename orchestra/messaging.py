@@ -165,6 +165,32 @@ def acknowledge(con: sqlite3.Connection, message_id: int) -> bool:
     return changed == 1
 
 
+def dismiss(con: sqlite3.Connection, message_id: int) -> bool:
+    """Retire one undeliverable message. The row and its reason are kept.
+
+    Runs inside a caller's API mutation when there is one, so the dismissal
+    commits with the rest of that request.
+    """
+    joined = db.in_api_mutation(con)
+    if not joined:
+        if con.in_transaction:
+            raise RuntimeError("message dismissal requires a clean transaction")
+        con.execute("BEGIN IMMEDIATE")
+    try:
+        changed = con.execute(
+            "UPDATE messages SET acknowledged_at=? WHERE id=? "
+            "AND status='undeliverable' AND acknowledged_at IS NULL",
+            (db.now(), message_id),
+        ).rowcount
+        if not joined:
+            con.commit()
+    except BaseException:
+        if not joined and con.in_transaction:
+            con.rollback()
+        raise
+    return changed == 1
+
+
 def mark_undeliverable(con: sqlite3.Connection, run_id: int, reason: str, *,
                        commit: bool = True) -> int:
     """Close only messages aimed at a run; its outbound thread remains intact."""

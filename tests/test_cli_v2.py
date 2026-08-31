@@ -76,6 +76,27 @@ class CLITests(unittest.TestCase):
         self.assertEqual(api_client.post.call_args.args[1]["name"],
                          "Long lived research")
 
+    def test_delegation_ceilings_are_sent_only_when_the_operator_names_them(self):
+        """A null would read as "no children"; absence means the fleet default."""
+        api_client = Mock()
+        api_client.post.return_value = {"data": {"run": {
+            "display": "General #1", "id": 1, "status": "queued",
+            "profile_name": "Quick"}}}
+        for argv, expected in (
+                (["run", "--profile", "q", "go"], {}),
+                (["run", "--profile", "q", "--max-children", "5",
+                  "--max-child-tier", "3", "go"],
+                 {"max_children": 5, "max_child_tier": 3})):
+            args = cli.build_parser().parse_args(argv)
+            args.json = False
+            with patch("orchestra.cli._client", return_value=api_client):
+                args.func(args)
+            body = api_client.post.call_args.args[1]
+            for key in ("max_children", "max_child_tier"):
+                self.assertEqual(key in body, key in expected, argv)
+                if key in expected:
+                    self.assertEqual(body[key], expected[key])
+
     def test_profile_discovery_runs_on_the_configured_orchestra_host(self):
         api_client = Mock()
         api_client.get.return_value = {"data": {

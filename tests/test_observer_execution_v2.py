@@ -223,6 +223,7 @@ class ObserverExecutionV2Tests(unittest.TestCase):
         os.chmod(credential_store, 0o600)
         inherited = {
             "PATH": os.environ.get("PATH", os.defpath), "HOME": str(home),
+            "USER": "owner", "LOGNAME": "owner",
             "LANG": "en_US.UTF-8", "ORCHESTRA_TOKEN": "run-value",
             "DAEMON_SECRET": "daemon-value", "ANTHROPIC_API_KEY": "api-value",
             "HTTPS_PROXY": "https://credential@example.invalid",
@@ -240,6 +241,9 @@ class ObserverExecutionV2Tests(unittest.TestCase):
                         profile, runtime_row, "--auto", 7, directory)
                     plans[adapter] = (plan, directory)
                     self.assertEqual(plan.env["HOME"], str(home))
+                    # Without USER the Claude CLI cannot reach its stored
+                    # credentials and reports "Not logged in".
+                    self.assertEqual(plan.env["USER"], "owner")
                     for key in ("ORCHESTRA_TOKEN", "DAEMON_SECRET",
                                 "ANTHROPIC_API_KEY", "HTTPS_PROXY",
                                 "PROFILE_SECRET", "CONFIG_SECRET",
@@ -261,8 +265,10 @@ class ObserverExecutionV2Tests(unittest.TestCase):
         self.assertIn("--disable-slash-commands", claude.argv)
         self.assertEqual(
             claude.argv[claude.argv.index("--tools") + 1], "")
+        # The CLI rejects a bare `{}`: the key must be present and empty.
         self.assertEqual(
-            claude.argv[claude.argv.index("--mcp-config") + 1], "{}")
+            claude.argv[claude.argv.index("--mcp-config") + 1],
+            '{"mcpServers":{}}')
 
         reasonix = plans["reasonix"][0]
         self.assertEqual(reasonix.argv[1], "--print")

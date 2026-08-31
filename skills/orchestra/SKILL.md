@@ -20,6 +20,9 @@ orchestra runway-sources
 orchestra runs
 ```
 
+`--json` is a global flag and goes before the subcommand:
+`orchestra --json show 42`.
+
 Groups organize and number runs. Profiles choose runtime, model, effort, tier,
 and runway. Profile routing belongs to the caller or integration.
 
@@ -56,6 +59,33 @@ Dispatch returns after admission. `queued` is valid and may show a dependency,
 pause, capacity, runway, or scheduled-retry hold. Do not report completion from
 an admission response.
 
+### Delegation ceilings
+
+A run inherits the fleet child and tier limits. Raise either one for a single
+run when you want it to convene a wider or higher-tier panel of children:
+
+```bash
+orchestra run --profile glm-5-3 --max-children 5 --max-child-tier 3 \
+  "Design the approach, then delegate the pieces."
+```
+
+`--max-children` is 1..100. `--max-child-tier` is 1, 2, or 3 and lets children
+exceed the parent's own tier, which the default rule forbids. Both are stated
+in the child's brief, so the worker knows what it is allowed to do.
+
+## Wait for a run
+
+Dispatch is not completion. Poll until the status is terminal:
+
+```bash
+until orchestra --json show 42 | grep -q '"status": "\(completed\|failed\|timed_out\|stopped\|skipped\)"'; do sleep 20; done
+orchestra show 42
+```
+
+Terminal states are `completed`, `failed`, `timed_out`, `stopped`, `skipped`.
+A `waiting` run is not stuck: check `orchestra inbox` for a question it needs
+answered, and `waiting_kind` for whether it waits on input or on children.
+
 ## Watch and inspect
 
 ```bash
@@ -86,11 +116,37 @@ Tell steers the current run when supported. Interrupt accepts replay risk.
 Retry creates a distinct run and may repeat the frozen request. Continue
 requires new Context and creates a distinct lineage node.
 
-## Delegation and attention
+## Inside a run
 
-Runs may delegate bounded child runs through their run token. Children inherit
-the frozen CWD and obey the three-tier model, depth, child-count, and active
-child limits.
+These commands read the run token from the environment, so a worker calls them
+with no run id. They are how a run delegates, asks, and publishes.
+
+```bash
+orchestra child --profile glm-5-3-flash "Build the settings screen."
+orchestra ask "Which bundle identifier should the app use?"
+orchestra ask --kind decision --choice "SwiftUI" --choice "UIKit" "Which toolkit?"
+orchestra artifact ./build/app.ipa
+```
+
+Run `orchestra profiles` before naming a child profile. A profile whose
+provider has no capacity left is listed as unavailable; a child dispatched to
+it is admitted and then held, and never starts. `orchestra runway` shows the
+same capacity by source.
+
+Profiles carry a spend bias the owner sets: 🔥 burn means spend this
+account down first, 🛡 preserve means lay off it, and no mark means no
+preference. Among profiles that would do the job equally well, prefer burn and
+avoid preserve.
+
+`orchestra child` names one profile per call; call it once per child. Children
+inherit the frozen CWD and group, and obey the tier, depth, child-count, and
+active-child limits, including any ceiling the dispatcher raised. The parent
+waits on its children and is responsible for combining their results.
+
+`orchestra ask` blocks the run until answered unless you pass `--nonblocking`.
+Use it only when progress genuinely requires a decision or missing input.
+
+## Attention
 
 ```bash
 orchestra inbox

@@ -194,6 +194,12 @@ def cmd_run(args):
         "after": [{"run_id": value, "condition": args.after_condition}
                   for value in args.after],
     }
+    # Omitted rather than sent as null: the fleet default applies unless the
+    # operator names a ceiling for this run.
+    if args.max_children is not None:
+        body["max_children"] = args.max_children
+    if args.max_child_tier is not None:
+        body["max_child_tier"] = args.max_child_tier
     result = _data(_client(args).post("/api/v2/runs", body))
     if args.json:
         return _print(result)
@@ -313,7 +319,19 @@ def cmd_resource(args):
             return _print(result)
         for item in result["items"]:
             suffix = " [archived]" if item.get("archived") else ""
-            print(f"{item.get('slug',''):<22} {item.get('name','')}{suffix}")
+            if item.get("enabled") is False:
+                suffix += " [disabled]"
+            # A held profile cannot start work. Saying so here is what stops
+            # an agent delegating into an exhausted account.
+            if item.get("runway_hold"):
+                suffix += f" [unavailable: {item['runway_hold']}]"
+            tier = item.get("tier")
+            tier_text = f"  tier {tier}" if tier else ""
+            # Spend bias, so an agent choosing among equals can see it.
+            bias = {"burn": "  \N{FIRE} burn",
+                    "preserve": "  \N{SHIELD} preserve"}.get(item.get("bias"), "")
+            print(f"{item.get('slug',''):<22} {item.get('name','')}"
+                  f"{tier_text}{bias}{suffix}")
         return
     body = {"request_id": _request_id(args.request_id,
                                       f"{noun}:{action}")}
@@ -543,6 +561,10 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--after", type=int, action="append", default=[])
     run.add_argument("--after-condition", choices=("success", "terminal"),
                      default="success")
+    run.add_argument("--max-children", type=int,
+                     help="override the fleet child-run limit for this run")
+    run.add_argument("--max-child-tier", type=int, choices=(1, 2, 3),
+                     help="highest tier this run's children may use")
     run.add_argument("--file")
     run.add_argument("--request-id")
     run.add_argument("context", nargs="*")

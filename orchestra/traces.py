@@ -247,6 +247,69 @@ def _reasonix(obj) -> list[dict] | None:
     return None
 
 
+# pi (`--mode json`) emits one event per line. `message_update` is a
+# token-level delta, and `message_start`/`turn_end`/`agent_end` repeat message
+# objects that `message_end` already carries in final form, so all of those are
+# recognized and dropped. Turn and agent markers are the same chatter every
+# other harness produces.
+_PI_NOISE = ("message_start", "message_update", "turn_start", "turn_end",
+             "agent_start", "agent_end", "agent_settled",
+             "tool_execution_start", "tool_execution_update", "queue_update")
+
+
+def _pi_blocks(blocks) -> list[dict]:
+    out = []
+    for block in blocks if isinstance(blocks, list) else []:
+        if not isinstance(block, dict):
+            continue
+        kind = block.get("type")
+        if kind == "text":
+            out.append(_ev("assistant_text", None, block.get("text") or ""))
+        elif kind == "thinking":
+            out.append(_ev("reasoning", None, block.get("thinking") or ""))
+        elif kind == "toolCall":
+            # ponytail: the call is read here rather than from
+            # `tool_execution_start`, which carries the same name and
+            # arguments one line later. The RESULT still comes from
+            # `tool_execution_end`, the only event that has it.
+            out.append(_ev("tool_call", block.get("name"), block.get("arguments")))
+    return out
+
+
+def _pi(obj) -> list[dict] | None:
+    kind = obj.get("type")
+    if kind == "message_end":
+        message = obj.get("message")
+        if not isinstance(message, dict):
+            return []
+        events = []
+        role = message.get("role")
+        if role == "user":
+            # The brief, and any message a human delivered into the run.
+            events.append(_ev("human_injection", "user",
+                              _text_of(message.get("content"))))
+        elif role == "assistant":
+            events.extend(_pi_blocks(message.get("content")))
+        # pi has a third role, `toolResult`, whose content is one text block
+        # holding the tool's output. It is skipped: `tool_execution_end`
+        # already records that output with its tool name and error flag, and
+        # reading it here too would repeat every result as assistant text.
+        detail = message.get("errorMessage")
+        if isinstance(detail, str) and detail:
+            # pi exits 0 after a failed turn, so this line is the only record.
+            events.append(_ev("lifecycle", "error", detail))
+        return events
+    if kind == "tool_execution_end":
+        return [_ev("tool_result", obj.get("toolName"),
+                    {"isError": obj.get("isError"), "result": obj.get("result")})]
+    if kind in ("session", "auto_retry_start", "auto_retry_end",
+                "compaction_start", "compaction_end"):
+        return [_ev("lifecycle", kind, obj, _ts(obj))]
+    if kind in _PI_NOISE:
+        return []
+    return None
+
+
 # --- ACP transport (DESIGN §5) ----------------------------------------------
 # The second transport feeds THIS table, not a second one: ``acp.py`` writes
 # every JSON-RPC frame into the same raw log (tagged ``_dir`` / ``_ts`` /
@@ -312,8 +375,8 @@ def _acp(obj) -> list[dict] | None:
     return [_ev("lifecycle", label, params or obj, ts)]
 
 
-PARSERS = {"claude": _claude, "codex": _codex,
-           "opencode": _opencode, "reasonix": _reasonix}
+PARSERS = {"claude": _claude, "codex": _codex, "opencode": _opencode,
+           "pi": _pi, "reasonix": _reasonix}
 
 
 def parse_line(backend: str, line: str) -> list[dict] | None:

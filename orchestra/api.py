@@ -141,6 +141,44 @@ def _operator(identity: auth.Identity | None) -> auth.Identity:
     return identity
 
 
+_DIRECTORY_LIMIT = 500  # ponytail: one flat page; paginate if a real
+                        # directory ever exceeds it
+
+
+def _host_directories(raw: str | None) -> dict:
+    """One level of the daemon host's directory tree, for a path picker.
+
+    Operator-only, because it discloses host layout. Hidden entries stay
+    hidden and symlinked directories are not followed.
+    """
+    text = (raw or "~").strip() or "~"
+    try:
+        base = Path(text).expanduser().resolve()
+    except (OSError, RuntimeError) as exc:
+        raise Problem(400, "invalid_path",
+                      "That path could not be resolved.") from exc
+    if not base.is_dir():
+        raise Problem(404, "not_found", "That path is not a directory.")
+    try:
+        names = sorted((entry.name for entry in os.scandir(base)
+                        if not entry.name.startswith(".")
+                        and entry.is_dir(follow_symlinks=False)),
+                       key=str.lower)
+    except OSError as exc:
+        raise Problem(403, "forbidden",
+                      "That directory could not be read.") from exc
+    return {
+        "path": str(base),
+        "parent": None if base.parent == base else str(base.parent),
+        "home": str(Path.home()),
+        # Full paths, so a client never has to join them itself and guess
+        # this host's separator.
+        "directories": [{"name": name, "path": str(base / name)}
+                        for name in names[:_DIRECTORY_LIMIT]],
+        "truncated": len(names) > _DIRECTORY_LIMIT,
+    }
+
+
 def _discovery_error(value) -> str | None:
     """Return a useful category without publishing CLI stderr or host paths."""
     if value is None:
@@ -168,12 +206,12 @@ def _profile_discovery_payload(raw, *, local_requested: bool,
     """Canonical, bounded-key projection of daemon-host harness discovery."""
     raw = raw if isinstance(raw, dict) else {}
     runtimes = {}
-    for runtime in ("opencode", "codex", "reasonix", "claude"):
+    for runtime in ("opencode", "codex", "pi", "reasonix", "claude"):
         present = runtime in raw
         result = raw.get(runtime)
         result = result if isinstance(result, dict) else {}
         data = result.get("data")
-        if runtime == "opencode" and isinstance(data, dict):
+        if runtime in ("opencode", "pi") and isinstance(data, dict):
             data = {
                 str(provider): _catalog_strings(models)
                 for provider, models in data.items()
@@ -519,6 +557,9 @@ class API:
             return self.response(self._run_feed(query))
         if root in {"groups", "runtimes", "profiles", "runway-sources"}:
             return self._resources(root, method, segments[1:], query, body, identity)
+        if root == "host-directories" and method == "GET" and len(segments) == 1:
+            _operator(identity)
+            return self.response(_host_directories(query.get("path")))
         if root == "profile-discovery" and method == "GET" and len(segments) == 1:
             _operator(identity)
             local_requested = _bool(query.get("local"), False)
@@ -537,6 +578,23 @@ class API:
         if root == "outbox" and method == "GET" and len(segments) == 1:
             _authorize(identity, "read")
             return self.response(self._outbox(query))
+        if root == "outbox" and method == "POST" and len(segments) == 3 \
+                and segments[2] == "acknowledge":
+            operator = _operator(identity)
+            try:
+                message_id = int(segments[1])
+            except ValueError as exc:
+                raise Problem(404, "not_found", "No such message.") from exc
+
+            def acknowledge():
+                if not messaging.dismiss(self.con, message_id):
+                    raise Problem(409, "not_undeliverable",
+                                  "Only an undeliverable message that has not "
+                                  "been acknowledged can be dismissed.")
+                return {"acknowledged": message_id}
+            return self.mutation(
+                method, f"/api/v2/outbox/{message_id}/acknowledge", body,
+                acknowledge, actor=_actor(operator))
         if root == "artifacts":
             return self._artifact(method, segments[1:], identity)
         if root in {"devices", "service-tokens"}:
@@ -585,12 +643,16 @@ class API:
             "undeliverable": 0, "inbound": 0, "outbound": 0, "system": 0,
         }
         for row in self.con.execute(
-                "SELECT direction,status,COUNT(*) AS n FROM messages "
-                "GROUP BY direction,status"):
+                "SELECT direction,status,acknowledged_at IS NULL AS unseen,"
+                "COUNT(*) AS n FROM messages GROUP BY direction,status,unseen"):
             count = int(row["n"])
             message_counts["total"] += count
-            message_counts[row["status"]] += count
             message_counts[row["direction"]] += count
+            if row["status"] != "undeliverable" or row["unseen"]:
+                message_counts[row["status"]] += count
+        message_counts["undeliverable_acknowledged"] = int(self.con.execute(
+            "SELECT COUNT(*) AS n FROM messages WHERE status='undeliverable' "
+            "AND acknowledged_at IS NOT NULL").fetchone()["n"])
         run_total = sum(statuses.values())
         active = sum(statuses.get(status, 0) for status in db.RUN_ACTIVE)
         observer_row = fleet_config.observer(self.con)
@@ -1730,11 +1792,15 @@ def profile_payload(con, row) -> dict:
         "runtime_id": row["runtime_id"],
         "runtime_name": runtime_row["name"] if runtime_row else None,
         "model": row["model"], "effort": row["effort"],
-        "tier": row["tier"], "priority": row["priority"],
+        "tier": row["tier"], "bias": row["bias"],
+        "priority": row["priority"],
         "sandbox": row["sandbox"], "timeout_seconds": row["timeout_seconds"],
         "active_cap": row["max_concurrency"],
         "runway_source_id": row["runway_source_id"],
         "runway_source_name": source["name"] if source else None,
+        # The very hold the scheduler would apply, so anyone choosing a
+        # profile sees that it cannot start before they pick it.
+        "runway_hold": scheduler.runway_hold(con, row["runway_source_id"]),
         "env_configured": bool(_json(row["env_json"], {})),
         "config_configured": bool(_json(row["config_json"], {})),
         "observer_compatible": observer_compatible,
@@ -1982,6 +2048,7 @@ def message_payload(item) -> dict:
         "delivered_at": value.get("delivered_at"),
         "undeliverable_at": value.get("undeliverable_at"),
         "delivery_error": value.get("undeliverable_reason"),
+        "acknowledged_at": value.get("acknowledged_at"),
     }
     if value.get("group_name") and value.get("group_seq"):
         result["display"] = f"{value['group_name']} #{value['group_seq']}"
@@ -2154,6 +2221,8 @@ def openapi() -> dict:
             ("patch", "Update runtime", "Mutation", "json", False)],
         "/api/v2/profiles": [("get", "List profiles", None, "json", False),
                               ("post", "Create profile", "Mutation", "json", False)],
+        "/api/v2/host-directories": [
+            ("get", "List daemon-host subdirectories", None, "json", False)],
         "/api/v2/profile-discovery": [
             ("get", "Discover daemon-host profile catalogs", None, "json", False)],
         "/api/v2/profiles/{resource_id}": [
@@ -2180,6 +2249,9 @@ def openapi() -> dict:
         "/api/v2/inbox/stream": [("get", "Inbox stream", None, "sse", False)],
         "/api/v2/outbox": [
             ("get", "Fleet message ledger", None, "json", False)],
+        "/api/v2/outbox/{message_id}/acknowledge": [
+            ("post", "Dismiss an undeliverable message", "Mutation",
+             "json", False)],
         "/api/v2/attention-feed": [
             ("get", "Revision-ordered attention feed", None, "json", False)],
         "/api/v2/attention/{attention_id}": [
@@ -2283,6 +2355,7 @@ def openapi() -> dict:
         ("patch", "/api/v2/runtimes/{resource_id}"): "RuntimeResult",
         ("get", "/api/v2/profiles"): "ProfilePage",
         ("post", "/api/v2/profiles"): "ProfileResult",
+        ("get", "/api/v2/host-directories"): "HostDirectories",
         ("get", "/api/v2/profile-discovery"): "ProfileDiscovery",
         ("get", "/api/v2/profiles/{resource_id}"): "Profile",
         ("patch", "/api/v2/profiles/{resource_id}"): "ProfileResult",
@@ -2301,6 +2374,7 @@ def openapi() -> dict:
         ("post", "/api/v2/scheduler/resume"): "SchedulerResult",
         ("get", "/api/v2/inbox"): "AttentionPage",
         ("get", "/api/v2/outbox"): "MessagePage",
+        ("post", "/api/v2/outbox/{message_id}/acknowledge"): "Acknowledged",
         ("get", "/api/v2/attention-feed"): "AttentionFeed",
         ("get", "/api/v2/attention/{attention_id}"): "Attention",
         ("post", "/api/v2/attention/{attention_id}/answer"): "AttentionResult",
@@ -2335,6 +2409,7 @@ def openapi() -> dict:
         ("get", "/api/v2/groups"): ("Limit", "Cursor", "IncludeArchived"),
         ("get", "/api/v2/runtimes"): ("Limit", "Cursor", "IncludeArchived"),
         ("get", "/api/v2/profiles"): ("Limit", "Cursor", "IncludeArchived"),
+        ("get", "/api/v2/host-directories"): ("DirectoryPath",),
         ("get", "/api/v2/profile-discovery"): ("LocalDiscovery",),
         ("get", "/api/v2/runway-sources"):
             ("Limit", "Cursor", "IncludeArchived"),
@@ -2484,7 +2559,14 @@ def openapi() -> dict:
                 "requested_by": {"type": "string"},
                 "observer": {"type": "string", "description":
                     "'inherit', 'off', or an enabled profile id/slug backed "
-                    "by a claude, opencode, or reasonix runtime."}},
+                    "by a claude, opencode, or reasonix runtime."},
+                "max_children": {"type": ["integer", "null"], "minimum": 1,
+                    "maximum": 100, "description":
+                    "Per-run override of the fleet child-run limit."},
+                "max_child_tier": {"type": ["integer", "null"], "minimum": 1,
+                    "maximum": 3, "description":
+                    "Highest tier this run's children may use; defaults to "
+                    "the run's own tier."}},
             "additionalProperties": False},
     }
 
@@ -2649,10 +2731,17 @@ def openapi() -> dict:
             "name": {"type": "string"}, "runtime_id": {"type": "string"},
             "runtime_name": string_or_null, "model": string_or_null,
             "effort": string_or_null, "tier": {"enum": [1, 2, 3]},
+            "bias": {"enum": ["burn", "normal", "preserve"], "description":
+                "How to spend this profile's account when something picks "
+                "among equals in its tier."},
             "priority": {"type": "integer"}, "sandbox": string_or_null,
             "timeout_seconds": integer_or_null, "active_cap": integer_or_null,
             "runway_source_id": string_or_null,
-            "runway_source_name": string_or_null, "note": string_or_null,
+            "runway_source_name": string_or_null,
+            "runway_hold": {"anyOf": [{"type": "string"}, {"type": "null"}],
+                "description": "Why a run on this profile cannot start now, "
+                "or null when it can. Same rule the scheduler applies."},
+            "note": string_or_null,
             "env_configured": {"type": "boolean"},
             "config_configured": {"type": "boolean"},
             "observer_compatible": {"type": "boolean", "description":
@@ -2664,7 +2753,7 @@ def openapi() -> dict:
             "stats": {"type": "object", "additionalProperties": {
                 "type": "integer"}}, "revision": {"type": "integer"},
             "created_at": timestamp, "updated_at": timestamp,
-        }, ("id", "slug", "name", "runtime_id", "tier", "priority",
+        }, ("id", "slug", "name", "runtime_id", "tier", "bias", "priority",
             "env_configured", "config_configured", "observer_compatible",
             "observer_incompatibility", "enabled", "archived", "stats",
             "revision")),
@@ -2692,6 +2781,11 @@ def openapi() -> dict:
                 "type": "array", "items": {"type": "string"}}}),
             "error": ref("DiscoveryError"),
         }, ("data", "error")),
+        "PiDiscovery": obj({
+            "data": nullable({"type": "object", "additionalProperties": {
+                "type": "array", "items": {"type": "string"}}}),
+            "error": ref("DiscoveryError"),
+        }, ("data", "error")),
         "CodexDiscovery": obj({
             "data": nullable(array("CodexDiscoveredModel")),
             "error": ref("DiscoveryError"),
@@ -2706,12 +2800,23 @@ def openapi() -> dict:
         "RuntimeDiscoveries": obj({
             "opencode": ref("OpenCodeDiscovery"),
             "codex": ref("CodexDiscovery"),
+            "pi": ref("PiDiscovery"),
             "reasonix": ref("ReasonixDiscovery"),
             "claude": ref("ClaudeDiscovery"),
-        }, ("opencode", "codex", "reasonix", "claude")),
+        }, ("opencode", "codex", "pi", "reasonix", "claude")),
         "LocalDiscoveredModel": obj({
             "id": {"type": "string"}, "source": {"type": "string"},
         }, ("id", "source")),
+        "HostDirectory": obj({
+            "name": {"type": "string"}, "path": {"type": "string"},
+        }, ("name", "path")),
+        "HostDirectories": obj({
+            "path": {"type": "string"},
+            "parent": string_or_null,
+            "home": {"type": "string"},
+            "directories": array("HostDirectory"),
+            "truncated": {"type": "boolean"},
+        }, ("path", "parent", "home", "directories", "truncated")),
         "ProfileDiscovery": obj({
             "runtimes": ref("RuntimeDiscoveries"),
             "local_requested": {"type": "boolean"},
@@ -2783,15 +2888,17 @@ def openapi() -> dict:
             "reply_to": integer_or_null, "created_at": timestamp,
             "delivered_at": timestamp, "undeliverable_at": timestamp,
             "delivery_error": string_or_null,
+            "acknowledged_at": timestamp,
             "display": {"type": "string"},
         }, ("id", "run_id", "direction", "sender", "kind", "status", "body",
             "correlation_id", "reply_to", "created_at", "delivered_at",
-            "undeliverable_at", "delivery_error")),
+            "undeliverable_at", "delivery_error", "acknowledged_at")),
         "MessagePage": page("Message"),
         "TimelineMessagePage": timeline_page("Message"),
         "MessageCounts": obj({
             key: {"type": "integer", "minimum": 0} for key in (
                 "total", "pending", "delivered", "undeliverable",
+                "undeliverable_acknowledged",
                 "inbound", "outbound", "system")
         }, ("total", "pending", "delivered", "undeliverable", "inbound",
             "outbound", "system")),
@@ -2852,6 +2959,8 @@ def openapi() -> dict:
             "blocking", "choices", "opened_at")),
         "AttentionPage": page("Attention"),
         "AttentionFeed": page("Attention", numeric_cursor=True),
+        "Acknowledged": obj({"acknowledged": {"type": "integer"}},
+                            ("acknowledged",)),
         "AttentionResult": obj({"attention": ref("Attention"),
                                 "response_id": {"type": "integer"}},
                                ("attention", "response_id")),
@@ -3087,7 +3196,9 @@ def openapi() -> dict:
         "ProfileCreateRequest": mutation_request({
             "name": {"type": "string"}, "runtime_id": {"type": "string"},
             "model": string_or_null, "effort": string_or_null,
-            "tier": {"enum": [1, 2, 3]}, "priority": {"type": "integer"},
+            "tier": {"enum": [1, 2, 3]},
+            "bias": {"enum": ["burn", "normal", "preserve"]},
+            "priority": {"type": "integer"},
             "sandbox": string_or_null, "timeout_seconds": integer_or_null,
             "active_cap": integer_or_null, "runway_source_id": string_or_null,
             "env": {"type": "object", "writeOnly": True,
@@ -3100,7 +3211,9 @@ def openapi() -> dict:
         "ProfileUpdateRequest": mutation_request({
             "name": {"type": "string"}, "runtime_id": {"type": "string"},
             "model": string_or_null, "effort": string_or_null,
-            "tier": {"enum": [1, 2, 3]}, "priority": {"type": "integer"},
+            "tier": {"enum": [1, 2, 3]},
+            "bias": {"enum": ["burn", "normal", "preserve"]},
+            "priority": {"type": "integer"},
             "sandbox": string_or_null, "timeout_seconds": integer_or_null,
             "active_cap": integer_or_null, "runway_source_id": string_or_null,
             "env": {"type": "object", "writeOnly": True,
@@ -3204,6 +3317,9 @@ def openapi() -> dict:
         "IncludeArchived": {"name": "include_archived", "in": "query",
                             "required": False, "schema": {"type": "boolean",
                                                            "default": False}},
+        "DirectoryPath": {"name": "path", "in": "query", "required": False,
+                          "description": "Daemon-host directory to list; defaults to the home directory.",
+                          "schema": {"type": "string"}},
         "LocalDiscovery": {"name": "local", "in": "query", "required": False,
                            "description": "Also probe inference servers on the daemon host.",
                            "schema": {"type": "boolean", "default": False}},

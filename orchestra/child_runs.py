@@ -12,7 +12,8 @@ import uuid
 from collections.abc import Sequence
 
 from orchestra import db, fleet_config, runs
-from orchestra.contracts import RunRequest, child_tier_allowed
+from orchestra.contracts import (RunRequest, child_tier_allowed,
+                                delegation_overrides)
 
 
 class DelegationError(ValueError):
@@ -76,7 +77,9 @@ def _validate(con: sqlite3.Connection, parent, targets: list[str], *,
     if _depth(con, int(parent["id"])) + 1 > _setting(
             con, "delegation_max_depth", 2):
         raise DelegationError("delegation depth limit reached")
-    maximum = _setting(con, "delegation_max_children", 3)
+    override = delegation_overrides(parent["request_snapshot"])
+    maximum = override.get("max_children") or \
+        _setting(con, "delegation_max_children", 3)
     existing = int(con.execute(
         "SELECT COUNT(*) FROM runs WHERE parent_run_id=?", (parent["id"],)
     ).fetchone()[0])
@@ -91,7 +94,8 @@ def _validate(con: sqlite3.Connection, parent, targets: list[str], *,
         raise DelegationError(
             f"parent child-run limit is {maximum}; {existing + pending} already reserved")
     active = len(active_children(con, int(parent["id"])))
-    active_limit = _setting(con, "delegation_max_active_children", 3)
+    active_limit = override.get("max_children") or \
+        _setting(con, "delegation_max_active_children", 3)
     active_reserved = active + pending + (0 if already_reserved else len(targets))
     if active_reserved > active_limit:
         raise DelegationError(
@@ -106,7 +110,8 @@ def _validate(con: sqlite3.Connection, parent, targets: list[str], *,
         if runtime is None or runtime["archived"] or not runtime["enabled"]:
             raise DelegationError(
                 f"child profile {selector!r} runtime is unavailable")
-        if not child_tier_allowed(parent_tier, int(profile["tier"])):
+        if not child_tier_allowed(parent_tier, int(profile["tier"]),
+                                  override.get("max_child_tier")):
             raise DelegationError(
                 f"tier {parent_tier} parent cannot delegate upward "
                 f"to tier {profile['tier']}")

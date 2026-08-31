@@ -14,7 +14,7 @@ from typing import Any, Mapping
 from orchestra import runners
 
 
-BUILTIN_ADAPTERS = frozenset(("codex", "claude", "opencode", "reasonix"))
+BUILTIN_ADAPTERS = frozenset(("codex", "claude", "opencode", "pi", "reasonix"))
 ADAPTERS = BUILTIN_ADAPTERS | {"exec", "acp"}
 _PLACEHOLDERS = frozenset((
     "{workdir}", "{title}", "{prompt}", "{session_ref}", "{run_id}",

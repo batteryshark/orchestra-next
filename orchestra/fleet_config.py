@@ -10,7 +10,7 @@ from orchestra import db, paths, runway
 
 
 RUNTIME_ADAPTERS = frozenset({
-    "codex", "claude", "opencode", "reasonix", "exec", "acp",
+    "codex", "claude", "opencode", "pi", "reasonix", "exec", "acp",
 })
 COMMAND_RUNTIME_ADAPTERS = frozenset({"exec", "acp"})
 OBSERVER_ADAPTERS = frozenset({"claude", "opencode", "reasonix"})
@@ -332,6 +332,7 @@ def create_profile(
     runtime: str,
     *,
     tier: int,
+    bias: str = "normal",
     slug: str | None = None,
     model: str | None = None,
     effort: str | None = None,
@@ -351,6 +352,8 @@ def create_profile(
         raise ValueError("profile name is required")
     if int(tier) not in (1, 2, 3):
         raise ValueError("profile tier must be 1, 2, or 3")
+    if bias not in PROFILE_BIASES:
+        raise ValueError("profile bias must be burn, normal, or preserve")
     runtime_row = _available(con, "runtimes", "runtime_id", runtime, "runtime")
     source_row = None if runway_source is None else _available(
         con, "runway_sources", "source_id", runway_source, "runway source")
@@ -358,12 +361,14 @@ def create_profile(
     with con:
         minted = _slug(con, "profiles", name, slug)
         con.execute(
-            "INSERT INTO profiles(profile_id,slug,name,runtime_id,model,effort," 
-            "tier,priority,sandbox,timeout_seconds,max_concurrency,runway_source_id," 
+            "INSERT INTO profiles(profile_id,slug,name,runtime_id,model,effort,"
+            "tier,bias,priority,sandbox,timeout_seconds,max_concurrency,"
+            "runway_source_id,"
             "env_json,config_json,note,enabled,created_at,updated_at) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (profile_id, minted, name, runtime_row["runtime_id"], model, effort,
-             int(tier), int(priority), sandbox, timeout_seconds, max_concurrency,
+             int(tier), bias, int(priority), sandbox, timeout_seconds,
+             max_concurrency,
              source_row["source_id"] if source_row else None,
              _mapping(env, "env"), _mapping(config, "config"), note,
              int(enabled), timestamp, timestamp),
@@ -385,8 +390,13 @@ _SOURCE_FIELDS = {
     "name", "provider", "account", "lane", "adapter", "command_json",
     "config_json", "enabled",
 }
+# How an operator wants this profile's account spent when something picks
+# among equals: burn it down, leave it alone, or no preference.
+PROFILE_BIASES = ("burn", "normal", "preserve")
+
 _PROFILE_FIELDS = {
-    "name", "runtime_id", "model", "effort", "tier", "priority", "sandbox",
+    "name", "runtime_id", "model", "effort", "tier", "bias", "priority",
+    "sandbox",
     "timeout_seconds", "max_concurrency", "runway_source_id", "env_json",
     "config_json", "note", "enabled",
 }
@@ -544,6 +554,8 @@ def update_profile(con: sqlite3.Connection, selector: str, changes: dict, *,
         cooked["enabled"] = int(bool(cooked["enabled"]))
     if "tier" in cooked and int(cooked["tier"]) not in (1, 2, 3):
         raise ValueError("profile tier must be 1, 2, or 3")
+    if "bias" in cooked and cooked["bias"] not in PROFILE_BIASES:
+        raise ValueError("profile bias must be burn, normal, or preserve")
     return _update(con, "profiles", "profile_id", row, cooked,
                    _PROFILE_FIELDS, expected_revision=expected_revision,
                    actor=actor, action="profile.update", commit=commit)

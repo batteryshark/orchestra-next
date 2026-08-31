@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable
 
-from orchestra import db, paths, traces
+from orchestra import db, paths, traces, worktree
 
 
 KINDS = frozenset(("raw_logs", "artifacts"))
@@ -59,6 +59,12 @@ def report(con) -> dict:
         "artifact_bytes": artifact_bytes,
         "checkpoint_bytes": sum(_file_size(path) for path in checkpoint_paths),
         "worktree_bytes": _tree_size(paths.worktrees_dir()),
+        # Checkouts the daemon could not reclaim. Uncommitted work blocks
+        # removal by design, so these need a person, not another sweep.
+        "worktrees_retained": [
+            {"run_id": entry["run_id"], "branch": entry["branch"],
+             "reason": "; ".join(entry["risks"])}
+            for entry in worktree.retained(con) if entry["risks"]],
         "runs": int(con.execute("SELECT COUNT(*) FROM runs").fetchone()[0]),
         "pinned_runs": int(con.execute(
             "SELECT COUNT(*) FROM evidence_pins").fetchone()[0]),

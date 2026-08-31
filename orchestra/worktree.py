@@ -23,9 +23,10 @@ DOC_FILES = sorted({*SHARED_FILES, *(f for fs in BACKEND_FILES.values() for f in
 
 # Where ~/.orchestra/skills/ lands in a run: the harness's own skills path
 # where one is known (Claude Code reads .claude/skills; Reasonix mirrors
-# Claude's layout), else the shared .agents/skills. Codex and OpenCode have
+# Claude's layout; pi reads .pi/skills), else the shared .agents/skills. Codex and OpenCode have
 # no confirmed skills convention, so the fallback is honest, not guessed.
-BACKEND_SKILLS_DEST = {"claude": ".claude/skills", "reasonix": ".reasonix/skills"}
+BACKEND_SKILLS_DEST = {"claude": ".claude/skills", "pi": ".pi/skills",
+                       "reasonix": ".reasonix/skills"}
 SHARED_SKILLS_DEST = ".agents/skills"
 
 
@@ -385,6 +386,55 @@ def remove(workdir, root: Path | None = None, branch: str | None = None,
             return report
     report["removed"] = True
     return report
+
+
+def retained(con) -> list[dict]:
+    """Worktrees still on disk for runs that already finished.
+
+    A run releases its own checkout when it settles, but a settle that was
+    interrupted, or one that refused because work was uncommitted, leaves the
+    directory behind holding its branch. Nothing retried, so they accumulated.
+    Each entry carries the risks that would block removal, so a caller can
+    reclaim the safe ones and show the rest rather than guess.
+    """
+    seen, out = set(), []
+    for row in con.execute(
+            f"SELECT id,workdir,branch FROM runs WHERE status IN {db.TERMINAL_SQL} "
+            "AND workdir IS NOT NULL AND branch IS NOT NULL ORDER BY id"):
+        location = Path(row["workdir"])
+        key = str(location)
+        if key in seen or not location.exists():
+            continue
+        seen.add(key)
+        root = main_root(location)
+        if root is None or root == location.resolve():
+            continue  # the owner's own checkout, never Orchestra's to remove
+        if live_holders(con, location):
+            continue
+        out.append({"run_id": int(row["id"]), "workdir": key,
+                    "branch": row["branch"], "risks": removal_risks(location)})
+    return out
+
+
+def reclaim(con) -> dict:
+    """Remove every retained worktree that is safe to remove.
+
+    Safe means the same rule ``remove`` already applies: no live run is working
+    there and nothing is uncommitted. Anything else is reported, not deleted.
+    """
+    removed, kept = [], []
+    for entry in retained(con):
+        if entry["risks"]:
+            kept.append(entry)
+            continue
+        location = Path(entry["workdir"])
+        report = remove(location, main_root(location), branch=entry["branch"])
+        if report["removed"]:
+            removed.append(entry["workdir"])
+        else:
+            kept.append({**entry,
+                         "risks": [report["kept"] or report["error"] or "unknown"]})
+    return {"removed": removed, "kept": kept}
 
 
 def discard_created(workdir: Path, root: Path, branch: str) -> dict:

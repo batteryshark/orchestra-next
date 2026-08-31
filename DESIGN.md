@@ -88,7 +88,7 @@ caller-selected policy axis.
 ## 5. Runtimes and profiles
 
 A **Runtime** describes a process/session protocol. Codex, Claude Code,
-OpenCode, and Reasonix are first-class built-ins with normalized launch,
+OpenCode, Pi, and Reasonix are first-class built-ins with normalized launch,
 session, steering, interrupt, event, usage, and completion behavior. A
 configurable argv/ACP runtime supports another harness without loading Python
 plugins or granting an in-process extension surface.

@@ -50,6 +50,18 @@ def parse_opencode_models(text: str) -> dict[str, list[str]]:
     return providers
 
 
+def parse_pi_models(text: str) -> dict[str, list[str]]:
+    """`pi --list-models` prints a table: provider, model, then columns we
+    ignore. The header row names the first column `provider`."""
+    providers: dict[str, list[str]] = {}
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) < 2 or parts[0] == "provider":
+            continue
+        providers.setdefault(parts[0], []).append(parts[1])
+    return providers
+
+
 def parse_codex_models(text: str) -> list[dict]:
     """`codex debug models` prints one JSON object with a `models` list."""
     data = json.loads(text)
@@ -102,6 +114,7 @@ def discover(runner=_run, reasonix_config: Path = REASONIX_CONFIG) -> dict:
                                   parse_opencode_models)
     results["codex"] = attempt("codex", ["codex", "debug", "models"],
                                parse_codex_models)
+    results["pi"] = attempt("pi", ["pi", "--list-models"], parse_pi_models)
     path = reasonix_config.expanduser()
     try:
         results["reasonix"] = {"data": parse_reasonix_config(path.read_text(encoding="utf-8")),

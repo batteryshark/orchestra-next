@@ -5,6 +5,7 @@ about caller-specific workflow, routing, acceptance, or delivery policy.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
@@ -57,6 +58,21 @@ def _id(value: Any, field_name: str) -> int:
     return result
 
 
+def _bounded(value: Any, field_name: str, low: int, high: int) -> int | None:
+    """An optional integer ceiling the operator chose, or None for the default."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ContractError(f"{field_name} must be an integer")
+    try:
+        result = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ContractError(f"{field_name} must be an integer") from exc
+    if not low <= result <= high:
+        raise ContractError(f"{field_name} must be between {low} and {high}")
+    return result
+
+
 @dataclass(frozen=True, slots=True)
 class Dependency:
     run_id: int
@@ -93,6 +109,8 @@ class RunRequest:
     requested_by: str = "operator"
     observer: str = "inherit"
     parent_run_id: int | None = None
+    max_children: int | None = None
+    max_child_tier: int | None = None
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any], *,
@@ -105,7 +123,7 @@ class RunRequest:
         accepted = {
             "request_id", "profile", "context", "group", "title", "cwd",
             "ref", "after", "requested_by",
-            "observer", "parent_run_id",
+            "observer", "parent_run_id", "max_children", "max_child_tier",
         }
         unknown = set(value) - accepted
         if unknown:
@@ -139,6 +157,10 @@ class RunRequest:
                          or "operator",
             observer=observer or "inherit",
             parent_run_id=None if parent is None else _id(parent, "parent_run_id"),
+            max_children=_bounded(value.get("max_children"),
+                                  "max_children", 1, 100),
+            max_child_tier=_bounded(value.get("max_child_tier"),
+                                    "max_child_tier", 1, 3),
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -154,10 +176,32 @@ class RunRequest:
             "requested_by": self.requested_by,
             "observer": self.observer,
             "parent_run_id": self.parent_run_id,
+            "max_children": self.max_children,
+            "max_child_tier": self.max_child_tier,
         }
 
 
-def child_tier_allowed(parent_tier: int, child_tier: int) -> bool:
-    """Children may use the parent's capability tier or a cheaper one."""
+def child_tier_allowed(parent_tier: int, child_tier: int,
+                       ceiling: int | None = None) -> bool:
+    """Children may use the parent's capability tier or a cheaper one, unless
+    the operator raised the ceiling for this run when dispatching it."""
+    top = ceiling if ceiling in (1, 2, 3) else parent_tier
     return parent_tier in (1, 2, 3) and child_tier in (1, 2, 3) \
-        and child_tier <= parent_tier
+        and child_tier <= top
+
+
+def delegation_overrides(request_snapshot: str | None) -> dict[str, int]:
+    """The per-run delegation ceilings chosen at dispatch, if any.
+
+    They ride in ``request_snapshot`` rather than their own run columns: the
+    snapshot already freezes the whole request, and nothing queries on them.
+    """
+    try:
+        data = json.loads(request_snapshot or "{}")
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {key: data[key] for key in ("max_children", "max_child_tier")
+            if isinstance(data.get(key), int)
+            and not isinstance(data.get(key), bool)}

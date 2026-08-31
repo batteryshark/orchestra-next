@@ -20,16 +20,20 @@ from urllib.parse import urlsplit
 
 from orchestra import (attention, child_runs, config, db, fleet_config,
                        http, messaging, observer, paths, proc, runway, runtime,
-                       runs, runners, scheduler, supervise)
+                       runs, runners, scheduler, supervise, worktree)
 
 DEFAULT_INTERVAL = 1.0
 RUNWAY_INTERVAL_SECONDS = 300
+WORKTREE_SWEEP_SECONDS = 900
 OBSERVER_TIMEOUT_SECONDS = 300
 OBSERVER_STOP_GRACE_SECONDS = 5
 OBSERVER_OUTPUT_CHARS = 64 * 1024
 
 _OBSERVER_ENV_KEYS = (
-    "PATH", "HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA",
+    # USER and LOGNAME are not decoration: without USER the Claude CLI cannot
+    # find its stored credentials and reports "Not logged in", although the
+    # owner is logged in.
+    "PATH", "HOME", "USER", "LOGNAME", "USERPROFILE", "LOCALAPPDATA", "APPDATA",
     "XDG_DATA_HOME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL",
     "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "SSL_CERT_FILE",
     "SSL_CERT_DIR",
@@ -38,7 +42,8 @@ _OBSERVER_ARGS = {
     "claude": (
         "--safe-mode", "--disable-slash-commands", "--no-chrome",
         "--no-session-persistence", "--strict-mcp-config", "--mcp-config",
-        "{}", "--permission-mode", "dontAsk", "--tools", "",
+        # An empty object is rejected: the CLI wants the key, empty.
+        '{"mcpServers":{}}', "--permission-mode", "dontAsk", "--tools", "",
     ),
     "opencode": ("--pure",),
     "reasonix": (
@@ -274,6 +279,28 @@ def _poll_runway(con) -> int:
     db.meta_set(con, "runway_polled_at", db.now())
     con.commit()
     return len(sources)
+
+
+def _sweep_worktrees(con) -> dict:
+    """Retry the release a settling run could not finish.
+
+    A run frees its own checkout when it settles. An interrupted settle leaves
+    the directory behind holding its branch, and until this swept, nothing ever
+    tried again. Uncommitted work still blocks removal, by design.
+    """
+    last = db.meta_get(con, "worktree_swept_at")
+    if last:
+        try:
+            age = datetime.now(timezone.utc) - datetime.fromisoformat(
+                last.replace("Z", "+00:00"))
+            if age.total_seconds() < WORKTREE_SWEEP_SECONDS:
+                return {"removed": [], "kept": []}
+        except ValueError:
+            pass
+    result = worktree.reclaim(con)
+    db.meta_set(con, "worktree_swept_at", db.now())
+    con.commit()
+    return result
 
 
 def _snapshot(row, json_fields: tuple[str, ...]) -> dict:
@@ -1078,6 +1105,7 @@ def tick(con=None, *, launcher=supervise.spawn_supervisor,
         settled = child_runs.settle_requests(con)
         resumed = _resume_waiters(con, launcher)
         runway_count = _poll_runway(con)
+        swept = _sweep_worktrees(con)
         admitted_state = scheduler.admit(con)
         for run_id in admitted_state["skipped"]:
             supervise._after_terminal(con, int(run_id))
@@ -1088,6 +1116,8 @@ def tick(con=None, *, launcher=supervise.spawn_supervisor,
             "fallbacks": fallbacks, "recovery": recovery,
             "child_batches": child_batches, "settled_child_requests": settled,
             "resumed": resumed, "runway_sources_polled": runway_count,
+            "worktrees_reclaimed": swept["removed"],
+            "worktrees_retained": swept["kept"],
             "admission": admitted_state, "launched": launched,
             "observed": observed,
         }

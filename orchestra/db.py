@@ -170,6 +170,8 @@ CREATE TABLE profiles (
   model TEXT,
   effort TEXT,
   tier INTEGER NOT NULL CHECK(tier BETWEEN 1 AND 3),
+  bias TEXT NOT NULL DEFAULT 'normal'
+    CHECK(bias IN ('burn', 'normal', 'preserve')),
   priority INTEGER NOT NULL DEFAULT 0,
   sandbox TEXT,
   timeout_seconds INTEGER CHECK(timeout_seconds IS NULL OR timeout_seconds > 0),
@@ -411,7 +413,8 @@ CREATE TABLE messages (
   delivery_offset INTEGER,
   delivered_at TEXT,
   undeliverable_at TEXT,
-  undeliverable_reason TEXT
+  undeliverable_reason TEXT,
+  acknowledged_at TEXT
 );
 CREATE INDEX idx_messages_run ON messages(run_id, id);
 CREATE INDEX idx_messages_delivery ON messages(status, id);
@@ -835,6 +838,28 @@ def _migrate_usage_breakdown(con: sqlite3.Connection) -> None:
                 f"CHECK({name} IS NULL OR {name} >= 0)")
 
 
+def _migrate_message_acknowledgement(con: sqlite3.Connection) -> None:
+    """Let an operator retire an undeliverable message without deleting it.
+
+    The message stays: it is evidence that a direction never reached its run.
+    Acknowledging only stops it counting as something still needing attention.
+    """
+    if "acknowledged_at" not in _columns(con, "messages"):
+        con.execute("ALTER TABLE messages ADD COLUMN acknowledged_at TEXT")
+
+
+def _migrate_profile_bias(con: sqlite3.Connection) -> None:
+    """Add the spend bias to databases created before it existed.
+
+    Every existing profile becomes `normal`, which is the behaviour they
+    already had: no preference either way.
+    """
+    if "bias" not in _columns(con, "profiles"):
+        con.execute(
+            "ALTER TABLE profiles ADD COLUMN bias TEXT NOT NULL "
+            "DEFAULT 'normal' CHECK(bias IN ('burn', 'normal', 'preserve'))")
+
+
 def _ensure_message_revision_triggers(con: sqlite3.Connection) -> None:
     """Install additive v2 triggers on both new and already-created v2 stores."""
     con.execute("""
@@ -945,6 +970,8 @@ def connect(db_file=None) -> sqlite3.Connection:
             _initialize(con)
         _migrate_scope_model(con)
         _migrate_usage_breakdown(con)
+        _migrate_profile_bias(con)
+        _migrate_message_acknowledgement(con)
         _ensure_message_revision_triggers(con)
         _ensure_v2_defaults(con)
         _clear_subscription_costs(con)

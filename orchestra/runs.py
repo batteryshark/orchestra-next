@@ -7,7 +7,8 @@ import sqlite3
 from pathlib import Path
 
 from orchestra import brief, db, fleet_config, groups, paths
-from orchestra.contracts import RunRequest, child_tier_allowed
+from orchestra.contracts import (RunRequest, child_tier_allowed,
+                                delegation_overrides)
 
 
 _SECRET = re.compile(r"token|secret|password|credential|api.?key|cookie", re.I)
@@ -112,20 +113,26 @@ def _validate_parent(con, parent, profile) -> None:
     depth = _depth(con, int(parent["id"])) + 1
     if depth > _setting(con, "delegation_max_depth", 2):
         raise AdmissionError("delegation depth limit reached")
+    override = delegation_overrides(parent["request_snapshot"])
+    children_cap = override.get("max_children") or \
+        _setting(con, "delegation_max_children", 3)
+    active_cap = override.get("max_children") or \
+        _setting(con, "delegation_max_active_children", 3)
     count = con.execute(
         "SELECT COUNT(*) AS n FROM runs WHERE parent_run_id=?",
         (parent["id"],),
     ).fetchone()["n"]
-    if int(count) >= _setting(con, "delegation_max_children", 3):
+    if int(count) >= children_cap:
         raise AdmissionError("parent child-run limit reached")
     active = con.execute(
         f"SELECT COUNT(*) AS n FROM runs WHERE parent_run_id=? "
         f"AND status NOT IN {db.TERMINAL_SQL}", (parent["id"],),
     ).fetchone()["n"]
-    if int(active) >= _setting(con, "delegation_max_active_children", 3):
+    if int(active) >= active_cap:
         raise AdmissionError("parent active-child limit reached")
     parent_tier = _frozen_tier(parent)
-    if not child_tier_allowed(parent_tier, int(profile["tier"])):
+    if not child_tier_allowed(parent_tier, int(profile["tier"]),
+                              override.get("max_child_tier")):
         raise AdmissionError(
             f"tier {parent_tier} parent cannot delegate upward "
             f"to tier {profile['tier']}")
@@ -161,6 +168,7 @@ def _write_brief(con, run_id: int) -> None:
     profile = json.loads(run["profile_snapshot"])
     runtime = json.loads(run["runtime_snapshot"])
     may_delegate = _depth(con, run_id) < _setting(con, "delegation_max_depth", 2)
+    override = delegation_overrides(run["request_snapshot"])
     text = brief.compose(
         run_id=run_id, display_number=db.run_no(run),
         profile_name=profile.get("name") or run["profile_name"],
@@ -168,6 +176,8 @@ def _write_brief(con, run_id: int) -> None:
         request=run["mission"], requester=run["requested_by"],
         group_name=run["group_name"], workdir=run["workdir"],
         context=run["context"], may_delegate=may_delegate,
+        max_children=override.get("max_children"),
+        max_child_tier=override.get("max_child_tier"),
     )
     location = paths.run_dir(run_id) / "brief.md"
     location.write_text(text, encoding="utf-8")

@@ -77,6 +77,25 @@ class BuildCmdTests(unittest.TestCase):
         self.assertIn("--resume", resumed)
         self.assertNotIn("--permission-mode", resumed)
 
+    def test_pi_contract(self) -> None:
+        fresh = self.build("pi", model="zai/glm-5.3", effort="high",
+                           tools=["read", "bash", "web_search"])
+        resumed = runners.build_cmd(
+            {"name": "pi", "backend": "pi", "extra_args": []},
+            workdir="/w", title="title", prompt="-prompt",
+            resume_ref="01a05417-bb97")
+
+        self.assertEqual(fresh[:4], ["pi", "-p", "--mode", "json"])
+        self.assertEqual(fresh[-2:], ["--", "prompt"])
+        self.assertEqual(fresh[fresh.index("--model") + 1], "zai/glm-5.3")
+        self.assertEqual(fresh[fresh.index("--thinking") + 1], "high")
+        self.assertEqual(fresh[fresh.index("-t") + 1], "read,bash,web_search")
+        self.assertEqual(fresh[fresh.index("--name") + 1], "title")
+        # A brief that opens with a dash is a message, never a flag.
+        self.assertEqual(resumed[-2:], ["--", "-prompt"])
+        self.assertEqual(resumed[resumed.index("--session") + 1], "01a05417-bb97")
+        self.assertNotIn("--name", resumed)
+
     def test_unknown_harness_is_rejected(self) -> None:
         with self.assertRaises(SystemExit):
             self.build("gemini")
@@ -172,6 +191,32 @@ class LogParsingTests(unittest.TestCase):
             tmp.cleanup()
         self.assertEqual(runners.parse_log("/no/such/log.jsonl"), (None, None))
 
+    def test_pi_session_ref_comes_from_its_header_line(self) -> None:
+        tmp, log = self.write_log([
+            {"type": "session", "version": 3, "id": "01a05417-bb97",
+             "cwd": "/w"},
+            {"type": "message_end", "message": {"role": "assistant", "content": [
+                {"type": "text", "text": "done"}]}},
+        ])
+        try:
+            self.assertEqual(runners.parse_log(str(log)),
+                             ("01a05417-bb97", "done"))
+        finally:
+            tmp.cleanup()
+
+    def test_pi_reports_its_failure_although_it_exits_zero(self) -> None:
+        tmp, log = self.write_log([
+            {"type": "message_end", "message": {
+                "role": "assistant", "content": [], "stopReason": "error",
+                "errorMessage": "429: GLM Coding Plan package has expired"}},
+            {"type": "auto_retry_end", "success": False,
+             "finalError": "429: GLM Coding Plan package has expired"},
+        ])
+        try:
+            self.assertIn("expired", runners.parse_failure(str(log)))
+        finally:
+            tmp.cleanup()
+
     def test_usage_contract_per_harness(self) -> None:
         cases = (
             ("claude", [
@@ -217,6 +262,24 @@ class LogParsingTests(unittest.TestCase):
             ], {"tokens_in": 10, "tokens_out": 2, "tokens_total": 12,
                 "tokens_cache_read": None, "tokens_cache_write": None,
                 "cost_usd": None, "usage_source": "reasonix"}),
+            ("pi", [
+                {"type": "message_start", "message": {
+                    "role": "assistant", "usage": {"input": 999, "output": 999,
+                                                   "totalTokens": 1998}}},
+                {"type": "message_end", "message": {"role": "user"}},
+                {"type": "message_end", "message": {
+                    "role": "assistant", "usage": {
+                        "input": 10, "output": 2, "cacheRead": 3,
+                        "cacheWrite": 1, "totalTokens": 16,
+                        "cost": {"total": 0.25}}}},
+                {"type": "message_end", "message": {
+                    "role": "assistant", "usage": {
+                        "input": 4, "output": 1, "cacheRead": 0,
+                        "cacheWrite": 0, "totalTokens": 5,
+                        "cost": {"total": 0.05}}}},
+            ], {"tokens_in": 18, "tokens_out": 3, "tokens_total": 21,
+                "tokens_cache_read": 3, "tokens_cache_write": 1,
+                "cost_usd": 0.3, "usage_source": "pi"}),
             ("codex-zero", [
                 {"type": "turn.completed", "usage": {
                     "input_tokens": 0, "output_tokens": 0}},

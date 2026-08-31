@@ -28,7 +28,7 @@ _SECRET = re.compile(r"token|secret|password|credential|api.?key|cookie", re.I)
 _TIERS = {"cheap": 1, "low": 1, "workhorse": 1, "mid": 2, "medium": 2,
           "generalist": 2, "high": 3, "heavy": 3, "frontier": 3}
 _IMPORTABLE_BUILTIN_RUNTIMES = frozenset({
-    "codex", "claude", "opencode", "reasonix",
+    "codex", "claude", "opencode", "pi", "reasonix",
 })
 _LEGACY_HOOK_SUFFIXES = ("", " --bind", " --event PostCompact")
 

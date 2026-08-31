@@ -14,19 +14,48 @@ PROTOCOL = """## Orchestra protocol
 - End with a concise result: what happened, useful outputs, and unresolved caveats.
 """
 
-DELEGATION = """## Delegation
+DELEGATION_HEAD = """## Delegation
 
 You may delegate bounded pieces with `orchestra child --profile PROFILE -- MISSION`.
-Name each child profile explicitly. Children may use your tier or a lower tier; they
-inherit this run's group and working directory. You remain responsible for combining
-their results.
+Name each child profile explicitly. Children inherit this run's group and working
+directory. You remain responsible for combining their results.
+
+Run `orchestra profiles` first and skip any profile marked unavailable. A
+profile whose provider has no capacity left is admitted and then held, so the
+child never starts. Among profiles that would do the job equally well, prefer
+one marked burn and avoid one marked preserve; that is the owner saying which
+account to spend and which to leave alone.
 """
+
+TIERS = {1: "workhorse", 2: "core", 3: "frontier"}
+
+
+def delegation(children: int | None = None,
+               tier_ceiling: int | None = None) -> str:
+    """The delegation paragraph, stating the ceilings this run really has.
+
+    An operator may raise either one when dispatching, so the tier sentence is
+    replaced rather than appended: a brief that said both "your tier or lower"
+    and "any tier up to 3" would contradict itself.
+    """
+    tier = ("Children may use your tier or a lower tier."
+            if tier_ceiling is None else
+            f"Children may use any tier up to {tier_ceiling} "
+            f"({TIERS[tier_ceiling]}), including tiers above your own.")
+    count = ("" if children is None else
+             f" You may run up to {children} children at once.")
+    return DELEGATION_HEAD + tier + count + "\n"
+
+
+DELEGATION = delegation()
 
 
 def compose(*, run_id: int, display_number: str, profile_name: str,
             runtime_name: str, request: str, requester: str, group_name: str,
             workdir: str | Path, context: str | None = None,
-            may_delegate: bool = False) -> str:
+            may_delegate: bool = False,
+            max_children: int | None = None,
+            max_child_tier: int | None = None) -> str:
     parts = [f"""# {display_number}
 
 - Run ID: `{run_id}`
@@ -43,7 +72,7 @@ def compose(*, run_id: int, display_number: str, profile_name: str,
         parts.append(f"## Context\n\n{context.strip()}\n")
     parts.append(PROTOCOL)
     if may_delegate:
-        parts.append(DELEGATION)
+        parts.append(delegation(max_children, max_child_tier))
     return "\n".join(parts).rstrip() + "\n"
 
 

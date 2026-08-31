@@ -24,8 +24,8 @@ but those concepts remain outside it.
 - **Profile**: a managed launch configuration: runtime, model, effort,
   timeouts, environment policy, tier, capacity, and runway source.
 - **Runtime**: the harness adapter used by a profile. Codex, Claude Code,
-  OpenCode, and Reasonix are polished built-ins; a configurable argv runtime
-  covers other harnesses without a plugin framework.
+  OpenCode, Pi, and Reasonix are polished built-ins; a configurable argv
+  runtime covers other harnesses without a plugin framework.
 - **Runway source**: provider/account/lane availability shared by one or more
   profiles. A fresh definitive zero can hold starts; stale or unknown runway
   never does.

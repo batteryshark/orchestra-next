@@ -13,6 +13,8 @@ SAMPLES = {
         "type": "agent_message", "text": "hello"}},
     "opencode": {"type": "message.part.updated", "part": {
         "type": "text", "text": "hello"}},
+    "pi": {"type": "message_end", "message": {"role": "assistant", "content": [
+        {"type": "text", "text": "hello"}]}},
     "reasonix": {"kind": "text", "text": "hello"},
 }
 
@@ -32,6 +34,50 @@ class TraceParserTests(unittest.TestCase):
         event = traces.parse_line("reasonix", json.dumps(frame))[0]
         self.assertEqual((event["kind"], event["payload"]),
                          ("assistant_text", "hello"))
+
+    def test_pi_records_thinking_calls_results_and_its_own_errors(self):
+        lines = {
+            "reasoning": {"type": "message_end", "message": {
+                "role": "assistant",
+                "content": [{"type": "thinking", "thinking": "planning"}]}},
+            "tool_call": {"type": "message_end", "message": {
+                "role": "assistant", "content": [
+                    {"type": "toolCall", "id": "c1", "name": "web_search",
+                     "arguments": {"query": "pi"}}]}},
+            "tool_result": {"type": "tool_execution_end", "toolCallId": "c1",
+                            "toolName": "web_search", "result": "hit",
+                            "isError": False},
+            "human_injection": {"type": "message_end", "message": {
+                "role": "user",
+                "content": [{"type": "text", "text": "the brief"}]}},
+        }
+        for kind, value in lines.items():
+            with self.subTest(kind=kind):
+                events = traces.parse_line("pi", json.dumps(value))
+                self.assertEqual(events[0]["kind"], kind)
+
+        # pi exits 0 after a failed turn, so the error has to become an event.
+        failed = traces.parse_line("pi", json.dumps({
+            "type": "message_end", "message": {
+                "role": "assistant", "content": [], "stopReason": "error",
+                "errorMessage": "429: package expired"}}))
+        self.assertEqual(failed[0]["kind"], "lifecycle")
+        self.assertIn("expired", failed[0]["payload"])
+
+        # pi has a third message role. Its content is the tool's own output,
+        # which `tool_execution_end` already recorded: reading it again here
+        # repeated every result as assistant text (seen live on run 30).
+        self.assertEqual(traces.parse_line("pi", json.dumps({
+            "type": "message_end", "message": {
+                "role": "toolResult",
+                "content": [{"type": "text", "text": "total 120\ndrwxr-xr-x"}]}}),
+        ), [])
+
+        # Deltas and repeats of the same message are recognized, not stored.
+        for noise in ({"type": "message_update", "usage": {}},
+                      {"type": "turn_end", "message": {}, "toolResults": []},
+                      {"type": "tool_execution_start", "toolName": "read"}):
+            self.assertEqual(traces.parse_line("pi", json.dumps(noise)), [])
 
     def test_malformed_and_unknown_lines_fail_soft(self):
         for line in ("", "not json", "[]", '{"unknown": true}'):

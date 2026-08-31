@@ -32,6 +32,15 @@ CAPABILITIES = {
         "add_directory": False,
         "transport": ("exec", "acp"),
     },
+    "pi": {
+        "discovery": "cli",
+        "launch": True,
+        "resume": True,
+        "trace": True,
+        "usage": True,
+        "add_directory": False,
+        "transport": ("exec",),
+    },
     "reasonix": {
         "discovery": "config",
         "launch": True,

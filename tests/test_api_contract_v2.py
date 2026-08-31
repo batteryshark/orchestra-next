@@ -104,7 +104,7 @@ class APIContractTests(unittest.TestCase):
         self.assertEqual(set(profiles[0]), {
             "id", "slug", "name", "runtime_id", "runtime_name", "model",
             "effort", "tier", "priority", "sandbox", "timeout_seconds",
-            "active_cap", "runway_source_id", "runway_source_name", "note",
+            "active_cap", "runway_source_id", "runway_source_name", "runway_hold", "bias", "note",
             "env_configured", "config_configured", "observer_compatible",
             "observer_incompatibility", "enabled", "archived", "stats",
             "revision", "created_at", "updated_at",
@@ -292,6 +292,86 @@ class APIContractTests(unittest.TestCase):
         no_probe.assert_not_called()
         self.assertFalse(without_local["local_requested"])
         self.assertEqual(without_local["local_models"], [])
+
+    def test_dismissing_an_undeliverable_message_keeps_it_as_evidence(self):
+        """The badge should stop counting it; the record must not disappear."""
+        run = self.data(self.api.handle(
+            "POST", "/api/v2/runs", {}, {
+                "request_id": "dismiss-run", "profile": self.profile["slug"],
+                "context": "work"}, self.identity))["run"]
+        messaging.queue_tell(self.con, run["id"], "operator", "steer")
+        messaging.mark_undeliverable(self.con, run["id"], "run ended")
+        before = self.data(self.api.handle(
+            "GET", "/api/v2/snapshot", {}, None, self.identity))["messages"]
+        self.assertEqual(before["undeliverable"], 1)
+        stuck = [m for m in self.data(self.api.handle(
+            "GET", "/api/v2/outbox", {"status": "undeliverable"}, None,
+            self.identity))["items"]][0]
+
+        self.api.handle("POST", f"/api/v2/outbox/{stuck['id']}/acknowledge",
+                        {}, {"request_id": "dismiss-1"}, self.identity)
+        after = self.data(self.api.handle(
+            "GET", "/api/v2/snapshot", {}, None, self.identity))["messages"]
+        self.assertEqual(after["undeliverable"], 0)
+        self.assertEqual(after["undeliverable_acknowledged"], 1)
+        self.assertEqual(after["total"], before["total"])
+
+        kept = [m for m in self.data(self.api.handle(
+            "GET", "/api/v2/outbox", {"status": "undeliverable"}, None,
+            self.identity))["items"] if m["id"] == stuck["id"]][0]
+        self.assertIsNotNone(kept["acknowledged_at"])
+        self.assertEqual(kept["delivery_error"], "run ended")
+
+        with self.assertRaises(api.Problem) as again:
+            self.api.handle(
+                "POST", f"/api/v2/outbox/{stuck['id']}/acknowledge", {},
+                {"request_id": "dismiss-2"}, self.identity)
+        self.assertEqual(again.exception.status, 409)
+
+    def test_profile_spend_bias_round_trips_and_rejects_a_bad_value(self):
+        """The bias is how the owner says which account to spend."""
+        listed = self.data(self.api.handle(
+            "GET", "/api/v2/profiles", {}, None, self.identity))["items"][0]
+        self.assertEqual(listed["bias"], "normal")
+        updated = self.data(self.api.handle(
+            "PATCH", f"/api/v2/profiles/{listed['id']}", {},
+            {"request_id": "bias-1", "bias": "preserve"}, self.identity))
+        self.assertEqual(updated["profile"]["bias"], "preserve")
+        # Rejected the same way an out-of-range tier is, one layer down.
+        with self.assertRaisesRegex(ValueError, "burn, normal, or preserve"):
+            fleet_config.update_profile(
+                self.con, listed["id"], {"bias": "hoard"})
+
+    def test_host_directories_lists_one_level_for_operators_only(self):
+        """The path picker needs host directory names. Hidden entries stay
+        hidden, files are excluded, and a service token cannot browse."""
+        root = tempfile.mkdtemp()
+        os.mkdir(os.path.join(root, "projects"))
+        os.mkdir(os.path.join(root, ".secret"))
+        with open(os.path.join(root, "notes.txt"), "w") as handle:
+            handle.write("x")
+        payload = self.data(self.api.handle(
+            "GET", "/api/v2/host-directories", {"path": root}, None,
+            self.identity))
+        self.assertEqual([d["name"] for d in payload["directories"]],
+                         ["projects"])
+        self.assertTrue(payload["directories"][0]["path"].endswith("projects"))
+        self.assertEqual(payload["path"], os.path.realpath(root))
+        self.assertFalse(payload["truncated"])
+
+        _, raw_service = auth.create_service_token(
+            self.con, "Reader", ["read"])
+        service = auth.identify(self.con, raw_service)
+        with self.assertRaises(api.Problem) as denied:
+            self.api.handle("GET", "/api/v2/host-directories",
+                            {"path": root}, None, service)
+        self.assertEqual(denied.exception.status, 403)
+
+        with self.assertRaises(api.Problem) as missing:
+            self.api.handle("GET", "/api/v2/host-directories",
+                            {"path": os.path.join(root, "notes.txt")}, None,
+                            self.identity)
+        self.assertEqual(missing.exception.status, 404)
 
     def test_pairing_returns_only_the_canonical_device_identity(self):
         created = self.api.handle(
@@ -569,14 +649,15 @@ class APIContractTests(unittest.TestCase):
         self.assertEqual(set(pending[0]), {
             "id", "run_id", "direction", "sender", "kind", "status", "body",
             "correlation_id", "reply_to", "created_at", "delivered_at",
-            "undeliverable_at", "delivery_error", "display",
+            "undeliverable_at", "delivery_error", "acknowledged_at", "display",
         })
         self.assertEqual(pending[0]["display"], "General #1")
         snapshot = self.data(self.api.handle(
             "GET", "/api/v2/snapshot", {}, None, self.identity))
         self.assertEqual(snapshot["messages"], {
             "total": 3, "pending": 1, "delivered": 2,
-            "undeliverable": 0, "inbound": 1, "outbound": 1, "system": 1,
+            "undeliverable": 0, "undeliverable_acknowledged": 0,
+            "inbound": 1, "outbound": 1, "system": 1,
         })
 
     def test_thread_and_events_start_current_and_support_older_and_newer_cursors(self):

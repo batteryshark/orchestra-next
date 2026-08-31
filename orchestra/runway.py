@@ -74,9 +74,16 @@ KEY_SOURCES = {
     "kimi": ("kimi-for-coding", "KIMI_CODING_API_KEY"),
     "minimax": ("minimax-coding-plan", "MINIMAX_API_KEY"),
     "xai": ("xai", "XAI_API_KEY"),
+    "zai": ("zai", "ZAI_API_KEY"),
 }
 
 DEEPSEEK_BALANCE_URL = "https://api.deepseek.com/user/balance"
+
+# The wallet behind per-token Z.ai billing. Undocumented — it is what the
+# billing page itself calls — but it takes the ordinary API key, and it needs
+# the account's own customer id, which the source carries in its config.
+ZAI_BALANCE_URL = \
+    "https://api.z.ai/api/platform-charge-zai/business/accountBalance"
 
 # Kimi's coding plan is a separate surface from the Moonshot open platform,
 # with its own key (sk-kimi-…). Undocumented endpoint, verified 2026-08-13.
@@ -445,6 +452,52 @@ def deepseek(auth_path: Path | str = OPENCODE_AUTH,
     provider billed per token, so its money is its runway."""
     data, err = _get_json(url, "deepseek", auth_path=auth_path)
     return unknown("deepseek", err) if err else parse_deepseek(data)
+
+
+# --- Z.ai wallet ------------------------------------------------------------
+
+@soft("zai")
+def parse_zai(data: dict) -> Runway:
+    payload = (data or {}).get("data") or {}
+    accounts = payload.get("accountList") or []
+    total = payload.get("totalBalance")
+    if total is None and not accounts:
+        return unknown("zai", "no balance in response")
+    if total is None:
+        total = accounts[0].get("balance")
+    frozen = sum(_number(a.get("frozenBalance") or 0) for a in accounts)
+    return Runway(
+        "zai",
+        remaining=_number(total),
+        unit="USD",
+        raw=_scrub({"frozen_balance": frozen,
+                    "accounts": len(accounts),
+                    "is_ka": payload.get("isKa")}),
+    )
+
+
+@soft("zai")
+def zai(config: dict | None = None, auth_path: Path | str = OPENCODE_AUTH,
+        url: str = ZAI_BALANCE_URL) -> Runway:
+    """Prepaid wallet — no window, so no resets_at. A coding plan is a
+    different surface with its own quota; this is the per-token balance."""
+    customer = str((config or {}).get("customer_id") or "").strip()
+    if not customer:
+        return unknown("zai", "set config customer_id for this Z.ai account")
+    key, source = api_key("zai", auth_path)
+    if not key:
+        return unknown("zai", source)
+    _, body, err = _fetch(
+        url, key, {"Content-Type": "application/json;charset=UTF-8"},
+        json.dumps({"customerId": customer}).encode("utf-8"))
+    if err:
+        return unknown("zai", err)
+    try:
+        data = json.loads(body or b"{}")
+    except ValueError:
+        # Never echo the body: it can carry the key back.
+        return unknown("zai", "response was not JSON")
+    return parse_zai(data)
 
 
 # --- Kimi coding plan -------------------------------------------------------
@@ -1383,7 +1436,12 @@ BUILTIN_SOURCE_ADAPTERS = {
     "kimi": kimi,
     "minimax": minimax,
     "xai": xai,
+    "zai": zai,
 }
+
+# Adapters identified by their key alone need no configuration. These carry an
+# account id the key does not imply, so the source config reaches them.
+CONFIGURED_SOURCE_ADAPTERS = frozenset(("zai",))
 
 
 def _source_json(source, key: str) -> dict:
@@ -1466,6 +1524,8 @@ def poll_source(source, *, runner=subprocess.run) -> dict:
         function = BUILTIN_SOURCE_ADAPTERS.get(adapter)
         if function is None:
             reading = unknown(source["provider"], f"unknown adapter {adapter!r}")
+        elif adapter in CONFIGURED_SOURCE_ADAPTERS:
+            reading = function(_source_json(source, "config_json"))
         else:
             reading = function()
     config = _source_json(source, "config_json")

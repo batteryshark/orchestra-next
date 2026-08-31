@@ -35,6 +35,23 @@ class NeutralBriefTests(unittest.TestCase):
         self.assertIn("orchestra child --profile PROFILE", delegated)
         self.assertIn("your tier or a lower tier", " ".join(delegated.split()))
 
+    def test_delegation_warns_about_profiles_with_no_capacity(self):
+        """A held child never starts, so the parent has to look first."""
+        text = " ".join(compose(may_delegate=True).split())
+        self.assertIn("orchestra profiles", text)
+        self.assertIn("unavailable", text)
+        # The owner's spend bias only reaches the chooser through the brief.
+        self.assertIn("prefer one marked burn", text)
+        self.assertIn("avoid one marked preserve", text)
+
+    def test_a_raised_tier_ceiling_replaces_the_default_sentence(self):
+        """Both sentences at once would contradict each other."""
+        text = " ".join(compose(may_delegate=True, max_children=5,
+                                max_child_tier=3).split())
+        self.assertIn("any tier up to 3 (frontier)", text)
+        self.assertIn("up to 5 children at once", text)
+        self.assertNotIn("your tier or a lower tier", text)
+
     def test_brief_has_no_work_tracker_contract(self):
         text = compose().lower()
         for term in ("handoff", "writeback", "source item", "acceptancecriteria",

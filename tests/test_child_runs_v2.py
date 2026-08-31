@@ -67,6 +67,29 @@ class ChildRunsV2Tests(unittest.TestCase):
         self.assertEqual(self.con.execute(
             "SELECT COUNT(*) FROM child_requests").fetchone()[0], 0)
 
+    def test_dispatch_overrides_raise_the_child_and_tier_ceilings(self):
+        """An operator asking for a quorum of frontier experts sets both
+        ceilings on the parent; the fleet defaults would refuse each one."""
+        fleet_config.create_profile(
+            self.con, "Frontier", "exec", slug="frontier", tier=3)
+        wide, _ = runs.submit(self.con, RunRequest.from_mapping({
+            "request_id": "wide", "profile": "light",
+            "context": "Convene a panel",
+            "max_children": 5, "max_child_tier": 3}))
+        child_runs.enqueue(self.con, wide["id"],
+                           ["frontier"] * 5, "Judge this")
+        self.assertEqual(self.con.execute(
+            "SELECT COUNT(*) FROM child_requests").fetchone()[0], 1)
+        with self.assertRaisesRegex(child_runs.DelegationError, "limit"):
+            child_runs.enqueue(self.con, wide["id"], ["light"], "One too many")
+
+    def test_a_run_without_overrides_keeps_the_fleet_ceilings(self):
+        fleet_config.create_profile(
+            self.con, "Frontier", "exec", slug="frontier", tier=3)
+        with self.assertRaisesRegex(child_runs.DelegationError, "upward"):
+            child_runs.enqueue(self.con, self.parent["id"],
+                               ["frontier"], "Escalate")
+
     def test_processing_recovers_a_child_created_before_batch_bookkeeping(self):
         request, _ = child_runs.enqueue(
             self.con, self.parent["id"], ["light", "light"], "Recover")
