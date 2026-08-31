@@ -1,172 +1,84 @@
-# Orchestra API v2
+# Orchestra-next API v3
 
-The authoritative machine-readable contract is `GET /api/v2/openapi.json`.
-This guide explains the stable public model and its privacy boundaries.
+The service binds to `127.0.0.1:8766` by default. All resources use `/api/v3`; JSON responses include the API version, instance id, and board revision.
 
-## Envelope, identity, and errors
+## Core resources
 
-Every JSON API response except OpenAPI and `/health` is wrapped with:
+```text
+GET|POST  /api/v3/runs
+GET       /api/v3/runs/{id}
+GET       /api/v3/runs/{id}/events
+GET       /api/v3/runs/{id}/usage
+GET       /api/v3/runs/{id}/dependencies
+GET       /api/v3/runs/{id}/messages
+GET|POST  /api/v3/runs/{id}/children
+GET|POST  /api/v3/runs/{id}/artifacts
+GET       /api/v3/runs/{id}/changes
+POST      /api/v3/runs/{id}/merge
 
-```json
-{"api_version":2,"instance_id":"…","data":{}}
+POST      /api/v3/runs/{id}/tell
+POST      /api/v3/runs/{id}/interrupt
+POST      /api/v3/runs/{id}/reroute
+POST      /api/v3/runs/{id}/resume
+POST      /api/v3/runs/{id}/retry
+POST      /api/v3/runs/{id}/continue
+POST      /api/v3/runs/{id}/stop
+
+GET|POST  /api/v3/profiles
+PATCH     /api/v3/profiles/{id-or-slug}
+GET|POST  /api/v3/groups
+PATCH     /api/v3/groups/{id-or-slug}
+GET       /api/v3/attention
+POST      /api/v3/attention/{id}/lease
+POST      /api/v3/attention/{id}/answer
+GET       /api/v3/controls
+GET       /api/v3/callbacks
+GET       /api/v3/events
+GET       /api/v3/usage
+GET       /api/v3/storage
+POST      /api/v3/storage/plans
+GET       /api/v3/storage/plans/{id}
+POST      /api/v3/storage/plans/{id}/apply
 ```
 
-Clients must pin `instance_id`; a changed id is a different/reset fleet. JSON
-errors use `application/problem+json` semantics and stable error codes.
+List/feed endpoints accept an `after` cursor where applicable. The usage feed contains raw token facts only.
 
-Authenticate with a paired-device credential or a least-authority service
-token. Run tokens are restricted to their own bounded worker routes.
-
-## Core discovery
-
-```http
-GET /health
-GET /api/v2/openapi.json
-GET /api/v2/snapshot
-GET /api/v2/statistics
-GET /api/v2/groups
-GET /api/v2/runtimes
-GET /api/v2/profiles
-GET /api/v2/runway-sources
-```
-
-Groups organize and number runs. They may hold a private host-local default
-CWD. There is no Scope resource or profile allowlist attached to a directory.
-Profiles select runtime/model/effort/tier/runway; callers own routing policy.
-Statistics may be filtered by Group/Profile/status and return run counts,
-status breakdown, input/output/total tokens, metered API cost, and cumulative
-agent wall time in `agent_seconds`.
-
-Private runtime/profile/runway configuration uses write-only replacement
-fields. Public projections expose only `*_configured`. Omission preserves an
-unknown value; an explicit empty object/list clears it where documented.
-
-## Groups and CWD
-
-Create a group with an optional write-only default:
+## Run request
 
 ```json
-POST /api/v2/groups
-{"request_id":"group:research","name":"Research","cwd":"/host/path"}
-```
-
-Group projections expose `cwd_configured`, never the path. Group PATCH accepts
-exactly one mutable field per request (`name`, `archived`, or `cwd`). `cwd` is a
-string replacement or `null` to clear; omission means no change.
-
-## Admit a run
-
-```json
-POST /api/v2/runs
 {
-  "request_id":"mail:thread-42:attempt:1",
-  "group":"research",
-  "profile":"codex-medium",
-  "title":"Passkey landscape",
-  "context":"Research current passkey adoption and return a sourced brief.",
-  "cwd":"/optional/write-only/override",
-  "requested_by":"mail-bridge"
+  "request_id": "unique-id",
+  "profile": "profile-slug",
+  "objective": "Executable objective",
+  "group": "general",
+  "strategy": "goal",
+  "permission_mode": "workspace-write",
+  "title": null,
+  "cwd": null,
+  "ref": null,
+  "after": [],
+  "requested_by": "operator",
+  "limits": {"max_rounds": 32, "active_seconds": 7200},
+  "verify": {"argv": ["command", "arg"], "timeout_seconds": 600},
+  "max_children": null,
+  "max_child_tier": null
 }
 ```
 
-Required: `request_id`, `profile`, `context`.
+`strategy` is `goal` or `ralph`. Permission mode is `read-only`, `workspace-write`, or explicit `danger-full-access`.
 
-Optional: `group` (defaults to General), `title`, write-only `cwd`, opaque
-`ref`, dependencies in `after`, `requested_by`, and `observer`.
+## Authentication
 
-Context is the executable request. Title is metadata only and never becomes the
-prompt. There are no `mission`, `scope`, or `isolation` request fields.
-Repository detection and worktree handling are automatic internal behavior.
+Bearer types are operator devices, scoped services, and active run workers. Service authorities are independently grantable: `read`, `dispatch`, `attention-answer`, `reroute`, `resume`, `retry`, and `stop`. Run credentials are self-scoped to read, delegate, open attention, and publish artifacts.
 
-Admission returns immediately:
+Bootstrap and pairing endpoints:
 
-```json
-{"created":true,"run":{"id":42,"display":"Research #7","status":"queued"}}
+```text
+POST /api/v3/auth/bootstrap
+POST /api/v3/auth/pair
+POST /api/v3/auth/pair/redeem
+POST /api/v3/auth/service-tokens
 ```
 
-Only `request_id` deduplicates. Replay the identical request after uncertain
-delivery; Orchestra returns the same run with `created: false`. `ref` is opaque
-correlation and never deduplicates or routes.
-
-The run freezes group number, profile/runtime snapshots, executable Context,
-and resolved CWD. Public projections expose `cwd_source` (`run`, `group`, or
-`managed`), never the path.
-
-## Runs, evidence, and feeds
-
-```http
-GET /api/v2/runs
-GET /api/v2/runs/{id}
-GET /api/v2/runs/{id}/thread
-GET /api/v2/runs/{id}/events
-GET /api/v2/runs/{id}/lineage
-GET /api/v2/runs/{id}/observer
-GET /api/v2/runs/{id}/artifacts
-GET /api/v2/runs/{id}/changes
-GET /api/v2/runs/{id}/log
-GET /api/v2/run-feed?after=<revision>&limit=200
-GET /api/v2/attention-feed?after=<revision>&limit=200
-```
-
-Normalized event kinds include assistant text, reasoning, tool calls, tool
-results, lifecycle, and progress. Raw logs remain separately downloadable.
-Cursor feeds are durable delivery truth; SSE streams are low-latency hints.
-
-The lifecycle is `queued`, `starting`, `running`, `waiting`, `completed`,
-`failed`, `timed_out`, `stopped`, or `skipped`.
-
-## Control and lineage
-
-All mutations require an idempotent `request_id`.
-
-```http
-POST /api/v2/runs/{id}/tell
-POST /api/v2/runs/{id}/interrupt
-POST /api/v2/runs/{id}/stop
-POST /api/v2/runs/{id}/stop-tree
-POST /api/v2/runs/{id}/retry
-POST /api/v2/runs/{id}/continue
-POST /api/v2/runs/{id}/children
-```
-
-Tell and Interrupt accept `text`. Continue requires a new `context`. Retry may
-omit `context` to repeat the frozen request or provide a replacement. Retry,
-Continue, and children create distinct run ids in lineage. Children inherit the
-frozen CWD and obey tier/depth/count/active-child limits.
-
-## Attention, Inbox, and Outbox
-
-```http
-GET /api/v2/inbox
-GET /api/v2/outbox
-POST /api/v2/attention/{id}/answer
-POST /api/v2/attention/{id}/approve
-POST /api/v2/attention/{id}/reject
-POST /api/v2/attention/{id}/acknowledge
-```
-
-Questions, proposals, and alerts are generic. Orchestra does not require Nod;
-humans, Workbridge, or another callback consumer may answer.
-
-## Runway
-
-Runway sources expose capacity without leaking adapter credentials or raw
-configuration. A source may project percentage windows, monetary balance and
-currency unit, typed credits/count/expiry, reset timestamps, per-model windows,
-staleness, and bounded history. Missing timestamps stay unknown; clients must
-not invent “0 seconds ago.” Exhaustion holds admission and never silently
-substitutes a profile.
-
-## Settings and service log
-
-Fleet-wide capacity, delegation limits, Observer configuration, devices,
-tokens, and storage are administrative resources. `GET /api/v2/service-log`
-returns a bounded stdout/stderr tail for paired operators; run harness output
-remains in each run's retained log.
-
-## Integration boundary
-
-Integrations own source records, routing, claims, acceptance, retries,
-writeback, review policy, and Git landing. They use v2 HTTP only and must not
-import Orchestra internals, open its database, inspect private paths, or depend
-on removed work-tracking/control-turn concepts.
+Automated attention responders must lease an item before answering it. Operator devices may override a live lease.
+Profile/group mutation, Git merge, storage pruning, pairing, and service-token issuance require an operator device; scoped services cannot turn a narrow bearer into broader authority.

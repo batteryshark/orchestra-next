@@ -1,4 +1,4 @@
-"""Small v2 authority model: devices, integrations, and the current run."""
+"""Small V3 authority model: devices, integrations, and the current run."""
 from __future__ import annotations
 
 import hashlib
@@ -11,7 +11,9 @@ from datetime import datetime, timedelta, timezone
 from orchestra.contracts import TERMINAL_STATES
 
 
-SERVICE_AUTHORITIES = frozenset(("read", "dispatch", "control", "answer"))
+SERVICE_AUTHORITIES = frozenset((
+    "read", "dispatch", "attention-answer", "reroute", "resume", "retry", "stop",
+))
 RUN_AUTHORITIES = frozenset(("read", "delegate", "attention", "artifact"))
 _PAIRING_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 

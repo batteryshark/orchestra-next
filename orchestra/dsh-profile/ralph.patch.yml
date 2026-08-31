@@ -1,0 +1,12 @@
+# Explicit-only overlay. Ralph owns these descendants; normal runs do not load it.
+- id: subagent
+  disabled: false
+- id: subagent-spawn-in-process
+  disabled: false
+- id: workflow-worker-thread
+  disabled: false
+- id: tool-ralph
+  disabled: false
+  config:
+    subagentProvider: spawn
+    maxRounds: !!js Number(process.env.ORCHESTRA_NEXT_RALPH_ROUNDS)

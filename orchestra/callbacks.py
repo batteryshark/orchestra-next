@@ -21,7 +21,7 @@ from pathlib import Path
 
 from orchestra import db
 
-EVENTS = frozenset({"attention.opened", "run.terminal", "observer.stopped"})
+EVENTS = frozenset({"attention.opened", "run.terminal"})
 MAX_EVENT_BYTES = 32 * 1024
 CALLBACK_TIMEOUT = 15
 
@@ -45,7 +45,7 @@ def envelope(event: str, data: Mapping) -> bytes:
     if event not in EVENTS:
         raise ValueError(f"unsupported callback event: {event}")
     payload = json.dumps({
-        "version": 2,
+        "version": 3,
         "event": event,
         "occurred_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "data": dict(data),

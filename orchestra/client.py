@@ -1,4 +1,4 @@
-"""Thin v2 HTTP client and local operator-token storage for the CLI."""
+"""Thin V3 HTTP client and local operator-token storage for the CLI."""
 from __future__ import annotations
 
 import hashlib
@@ -22,7 +22,7 @@ class ClientError(RuntimeError):
 
 def _service(url: str) -> str:
     digest = hashlib.sha256(url.encode()).hexdigest()[:16]
-    return f"orchestra-v2-{digest}"
+    return f"orchestra-next-v3-{digest}"
 
 
 def _fallback_path() -> Path:
@@ -32,7 +32,7 @@ def _fallback_path() -> Path:
 def save_token(url: str, token: str) -> None:
     if sys.platform == "darwin":
         result = subprocess.run(
-            ["security", "add-generic-password", "-U", "-a", "orchestra",
+            ["security", "add-generic-password", "-U", "-a", "orchestra-next",
              "-s", _service(url), "-w", token], capture_output=True, text=True)
         if result.returncode == 0:
             return
@@ -52,13 +52,20 @@ def save_token(url: str, token: str) -> None:
 def load_token(url: str) -> str | None:
     # A supervised worker may inherit an operator shell that already had a
     # broader token. The short-lived run credential must always win.
-    explicit = os.environ.get("ORCHESTRA_RUN_TOKEN") or os.environ.get(
-        "ORCHESTRA_TOKEN")
+    auth_file = os.environ.get("ORCHESTRA_NEXT_RUN_AUTH_FILE")
+    explicit = None
+    if auth_file:
+        try:
+            explicit = json.loads(Path(auth_file).read_text(encoding="utf-8"))["token"]
+        except (OSError, ValueError, KeyError, TypeError):
+            explicit = None
+    if not explicit:
+        explicit = os.environ.get("ORCHESTRA_NEXT_TOKEN")
     if explicit:
         return explicit
     if sys.platform == "darwin":
         result = subprocess.run(
-            ["security", "find-generic-password", "-a", "orchestra",
+            ["security", "find-generic-password", "-a", "orchestra-next",
              "-s", _service(url), "-w"], capture_output=True, text=True)
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip()
@@ -104,7 +111,7 @@ class Client:
                 payload, message = None, str(exc)
             raise ClientError(message, exc.code, payload) from exc
         except urllib.error.URLError as exc:
-            raise ClientError(f"cannot reach Orchestra at {self.url}: {exc.reason}") from exc
+            raise ClientError(f"cannot reach Orchestra-next at {self.url}: {exc.reason}") from exc
 
     def get(self, path: str, **query):
         return self.request("GET", path, query=query)

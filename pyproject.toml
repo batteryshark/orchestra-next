@@ -1,14 +1,15 @@
 [project]
-name = "orchestra"
+name = "orchestra-next"
 license = "MIT"
 license-files = ["LICENSE"]
-version = "2.0.0"
-description = "Independent local agent-fleet runner with durable control, evidence, and universal clients"
+version = "3.0.0a1"
+description = "Durable DSH execution for local agent fleets"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
 
 [project.scripts]
-orchestra = "orchestra.cli:main"
+orchestra-next = "orchestra.cli:main"
 
 [build-system]
 requires = ["hatchling"]

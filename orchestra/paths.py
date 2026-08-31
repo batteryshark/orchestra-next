@@ -1,4 +1,4 @@
-"""Private filesystem layout for one Orchestra v2 instance."""
+"""Private filesystem layout for the experimental Orchestra-next instance."""
 from __future__ import annotations
 
 import os
@@ -6,20 +6,14 @@ import re
 from pathlib import Path
 
 
-def env(name: str, default: str = "") -> str:
-    value = os.environ.get(name)
-    return default if value is None else value
-
-
 def home() -> Path:
-    raw = env("ORCHESTRA_HOME", "~/.orchestra")
+    raw = os.environ.get("ORCHESTRA_NEXT_HOME", "~/.orchestra-next")
     if not raw:
-        raise SystemExit("orchestra: ORCHESTRA_HOME must not be empty")
+        raise SystemExit("orchestra-next: ORCHESTRA_NEXT_HOME must not be empty")
     candidate = Path(raw).expanduser()
     resolved = candidate.resolve()
     if resolved in (Path.cwd().resolve(), Path(resolved.anchor)):
-        raise SystemExit(
-            "orchestra: ORCHESTRA_HOME must be a dedicated state directory")
+        raise SystemExit("orchestra-next: state must use a dedicated directory")
     return candidate
 
 
@@ -31,37 +25,55 @@ def owner_dir(path: Path) -> Path:
 
 
 def state_dir() -> Path:
-    """The incompatible v2 state root; older roots are never opened here."""
-    return owner_dir(owner_dir(home()) / "v2")
+    return owner_dir(home())
 
 
 def db_path() -> Path:
-    return state_dir() / "orchestra.db"
+    return state_dir() / "orchestra-next.db"
 
 
 def bootstrap_path() -> Path:
-    """Non-secret daemon bootstrap (bind address and secret-file location)."""
     return state_dir() / "bootstrap.json"
 
 
-def secret_path() -> Path:
-    return state_dir() / "secrets.json"
+def dsh_profile_source() -> Path:
+    return Path(__file__).with_name("dsh-profile")
+
+
+def dsh_home() -> Path:
+    return Path(os.environ.get("DSH_HOME", "~/.dsh")).expanduser()
 
 
 def _sub(name: str) -> Path:
     return owner_dir(state_dir() / name)
 
 
+def runs_dir() -> Path:
+    return _sub("runs")
+
+
+def run_dir(run_id: int) -> Path:
+    return owner_dir(runs_dir() / str(int(run_id)))
+
+
+def run_session_dir(run_id: int) -> Path:
+    return owner_dir(run_dir(run_id) / "dsh-session")
+
+
+def run_auth_path(run_id: int) -> Path:
+    return run_dir(run_id) / "worker-auth"
+
+
 def logs_dir() -> Path:
     return _sub("logs")
 
 
-def briefs_dir() -> Path:
-    return _sub("briefs")
-
-
 def artifacts_dir() -> Path:
     return _sub("artifacts")
+
+
+def run_artifacts_dir(run_id: int) -> Path:
+    return owner_dir(artifacts_dir() / str(int(run_id)))
 
 
 def worktrees_dir(group_slug: str | None = None) -> Path:
@@ -69,28 +81,8 @@ def worktrees_dir(group_slug: str | None = None) -> Path:
     return owner_dir(root / slugify(group_slug)) if group_slug else root
 
 
-def groups_dir() -> Path:
-    return _sub("groups")
-
-
-def group_workspace(group_slug: str) -> Path:
-    return owner_dir(groups_dir() / slugify(group_slug) / "workspace")
-
-
-def run_dir(run_id: int) -> Path:
-    return owner_dir(_sub("runs") / str(int(run_id)))
-
-
-def run_artifacts_dir(run_id: int) -> Path:
-    return owner_dir(artifacts_dir() / str(int(run_id)))
-
-
 def backups_dir() -> Path:
     return _sub("backups")
-
-
-def archives_dir() -> Path:
-    return owner_dir(home() / "archives")
 
 
 def slugify(raw: str | None) -> str:
@@ -99,31 +91,3 @@ def slugify(raw: str | None) -> str:
 
 def kebab(raw: str | None) -> str:
     return re.sub(r"[^a-z0-9]+", "-", (raw or "").lower()).strip("-") or "item"
-
-
-def global_config_path() -> Path:
-    """Legacy config location, read only by the explicit v1 archive/import."""
-    return Path(env("ORCHESTRA_CONFIG", "~/.config/orchestra/config.toml")).expanduser()
-
-
-def legacy_state_candidates() -> tuple[Path, ...]:
-    base = home()
-    return tuple(path for path in (base / "fleet", base) if path != state_dir())
-
-
-def launch_agents_dir() -> Path:
-    return Path(env("ORCHESTRA_LAUNCH_AGENTS", "~/Library/LaunchAgents")).expanduser()
-
-
-def claude_settings_path() -> Path:
-    return Path(os.environ.get("CLAUDE_CONFIG_DIR", "~/.claude")).expanduser() \
-        / "settings.json"
-
-
-def codex_home() -> Path:
-    return Path(os.environ.get("CODEX_HOME", "~/.codex")).expanduser()
-
-
-def reasonix_settings_path() -> Path:
-    return Path(os.environ.get("REASONIX_HOME", "~/.reasonix")).expanduser() \
-        / "settings.json"

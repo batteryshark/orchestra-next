@@ -1,0 +1,53 @@
+# Canonical Orchestra-next profile for DSH 0.1.2-alpha.3.
+- id: session-persistence-jsonl
+  config:
+    root: !!js process.env.ORCHESTRA_NEXT_DSH_SESSION_ROOT
+    compression: none
+    packChunks: false
+
+- id: session-telemetry-otel
+  disabled: true
+
+- id: user-questions
+  disabled: true
+
+- id: plan-mode
+  disabled: true
+
+- id: subagent
+  disabled: true
+- id: subagent-spawn-in-process
+  disabled: true
+- id: subagent-fork-in-process
+  disabled: true
+- id: tool-subagent-control
+  disabled: true
+- id: tool-subagent-list-agents
+  disabled: true
+- id: tool-subagent
+  disabled: true
+- id: tool-subagent-fork
+  disabled: true
+- id: tool-subagent-report
+  disabled: true
+- id: workflow-worker-thread
+  disabled: true
+- id: tool-workflow
+  disabled: true
+- id: tool-ralph
+  disabled: true
+
+- id: tool-web
+  config:
+    fetch: true
+    searchTimeoutMs: 60000
+
+- id: system-prompt
+  config:
+    persona: >-
+      You are the resident worker for one durable Orchestra-next run. Use goals
+      for multi-round work and keep the same session alive until the goal is
+      complete. Use the orchestra-next CLI bridge for questions, child runs,
+      artifacts, and run interaction. Never invent an answer to a blocked
+      decision. Do not launch DSH subagents or workflows unless this process was
+      explicitly started with Orchestra's Ralph overlay.

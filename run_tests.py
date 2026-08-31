@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run the suite with one process per test module.
 
-Every module builds its own tempdir, its own ORCHESTRA_HOME and its own fake
+Every module builds its own tempdir, its own ORCHESTRA_NEXT_HOME and its own fake
 servers, so nothing is shared and nothing has to run in order.
 
     uv run python run_tests.py            # everything

@@ -1,4 +1,4 @@
-"""Isolated git worktrees and harness-scoped context propagation.
+"""Isolated Git worktrees and repository-scoped context propagation.
 
 Only Orchestra-owned linked checkouts are changed or removed. The group's
 owner checkout is never staged, committed, reset, cleaned, or merged.
@@ -9,29 +9,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from orchestra import db, harnesses, paths
+from orchestra import db, paths
 
 SHARED_DIRS = [".agents"]
 SHARED_FILES = ["AGENTS.md", "ORCHESTRA.md"]
-BACKEND_DIRS = {name: f".{name}" for name in harnesses.SUPPORTED}
-BACKEND_FILES = {"claude": ["CLAUDE.md"]}
-
-# Union of everything sync_skills may ever write: untracked_context_paths
-# still has to keep all of it out of automatic checkpoints.
-SKILL_DIRS = [*SHARED_DIRS, *sorted(BACKEND_DIRS.values())]
-DOC_FILES = sorted({*SHARED_FILES, *(f for fs in BACKEND_FILES.values() for f in fs)})
-
-# Where ~/.orchestra/skills/ lands in a run: the harness's own skills path
-# where one is known (Claude Code reads .claude/skills; Reasonix mirrors
-# Claude's layout; pi reads .pi/skills), else the shared .agents/skills. Codex and OpenCode have
-# no confirmed skills convention, so the fallback is honest, not guessed.
-BACKEND_SKILLS_DEST = {"claude": ".claude/skills", "pi": ".pi/skills",
-                       "reasonix": ".reasonix/skills"}
-SHARED_SKILLS_DEST = ".agents/skills"
-
-
-def global_skills_dest(backend: str | None = None) -> str:
-    return BACKEND_SKILLS_DEST.get(backend or "", SHARED_SKILLS_DEST)
+SKILL_DIRS = SHARED_DIRS
+DOC_FILES = SHARED_FILES
 
 _IGNORE = shutil.ignore_patterns("logs", "worktrees", "*.db*", "node_modules")
 
@@ -108,11 +91,6 @@ def untracked_context_paths(workdir: Path) -> list[str]:
     return excluded
 
 
-def global_skills_dir() -> Path:
-    """The v2-local overlay every run sees."""
-    return paths.state_dir() / "skills"
-
-
 def submodules(root: Path, workdir: Path) -> bool:
     """Populate a new worktree's submodules, if the repository has any.
 
@@ -166,54 +144,32 @@ def _declared_submodules(root: Path) -> dict:
     return found
 
 
-def sync_skills(root: Path, workdir: Path, backend: str | None = None) -> list[str]:
-    """Mirror the shared context + this backend's own skills into a workdir.
-
-    Git worktrees only contain tracked files, so untracked .agents/.claude/etc.
-    would otherwise be missing for the delegated tool. An unknown/absent
-    backend gets the shared set only -- never another harness's directory.
-    Finally the v2 fleet skill directory is overlaid, per entry, group-local
-    repository skills winning.
-    """
+def sync_skills(root: Path, workdir: Path) -> list[str]:
+    """Copy untracked repository instructions into a linked checkout."""
     synced = []
-    for d in [*SHARED_DIRS, *([BACKEND_DIRS[backend]] if backend in BACKEND_DIRS else [])]:
+    for d in SHARED_DIRS:
         src = root / d
         if src.is_dir() and not (workdir / d).exists():
             shutil.copytree(src, workdir / d, dirs_exist_ok=True, ignore=_IGNORE)
             synced.append(d)
-    for f in [*SHARED_FILES, *BACKEND_FILES.get(backend or "", [])]:
+    for f in SHARED_FILES:
         src = root / f
         if src.is_file() and not (workdir / f).exists():
             shutil.copy2(src, workdir / f)
             synced.append(f)
-    overlay = global_skills_dir()
-    if overlay.is_dir():
-        rel = global_skills_dest(backend)
-        dest_root = workdir / rel
-        for entry in sorted(overlay.iterdir()):
-            dest = dest_root / entry.name
-            if dest.exists():
-                continue  # the repository defines this skill: it wins
-            dest_root.mkdir(parents=True, exist_ok=True)
-            if entry.is_dir():
-                shutil.copytree(entry, dest, ignore=_IGNORE)
-            else:
-                shutil.copy2(entry, dest)
-            synced.append(f"{rel}/{entry.name}")
     return synced
 
 
 def create(root: Path, run_id: int, group_slug: str,
-           start_point: str | None = None,
-           backend: str | None = None) -> tuple[Path, str]:
+           start_point: str | None = None) -> tuple[Path, str]:
     """Create a git worktree for an isolated run; returns (workdir, branch).
 
-    Worktrees live centrally at ``v2/worktrees/<group>/run-N``, never inside
+    Worktrees live centrally under Orchestra-next state, never inside
     the owner checkout.
     """
     if not (root / ".git").exists():
         raise RuntimeError("worktree isolation needs a git repository CWD")
-    branch = f"orchestra/run-{run_id}"
+    branch = f"orchestra-next/run-{run_id}"
     wt = paths.worktrees_dir(group_slug) / f"run-{run_id}"
     # A fresh database restarts run ids, but the user's repository keeps the
     # branches earlier generations made. Step past any taken name.
@@ -221,7 +177,7 @@ def create(root: Path, run_id: int, group_slug: str,
     while (_git(root, ["show-ref", "--verify", "--quiet",
                        f"refs/heads/{branch}"]).returncode == 0 or wt.exists()):
         suffix += 1
-        branch = f"orchestra/run-{run_id}-{suffix}"
+        branch = f"orchestra-next/run-{run_id}-{suffix}"
         wt = paths.worktrees_dir(group_slug) / f"run-{run_id}-{suffix}"
     cmd = ["git", "-C", str(root), "worktree", "add", "-b", branch, str(wt)]
     if start_point:
@@ -231,7 +187,7 @@ def create(root: Path, run_id: int, group_slug: str,
         raise SystemExit(f"orchestra: git worktree failed: {res.stderr.strip()}")
     try:
         submodules(root, wt)
-        sync_skills(root, wt, backend)
+        sync_skills(root, wt)
     except BaseException:
         # The linked checkout and branch already exist at this point. A
         # context-copy failure must not leave an ownerless run-N behind.
@@ -244,7 +200,7 @@ def create(root: Path, run_id: int, group_slug: str,
 
 
 def restore(root: Path, run_id: int, group_slug: str, branch: str,
-            backend: str | None = None) -> Path:
+            ) -> Path:
     """Recreate the stable checkout for a retained run branch.
 
     Waiting releases process capacity and its linked checkout after a
@@ -267,7 +223,7 @@ def restore(root: Path, run_id: int, group_slug: str, branch: str,
             f"cannot restore worktree for {branch}: {result.stderr.strip()}")
     try:
         submodules(root, wt)
-        sync_skills(root, wt, backend)
+        sync_skills(root, wt)
     except BaseException:
         remove(wt, root, branch=branch, force=True)
         raise
@@ -299,7 +255,7 @@ def main_root(workdir: Path) -> Path | None:
 def dirty_paths(workdir: Path) -> list[str]:
     """Uncommitted work in a worktree.
 
-    The context Orchestra copied in (harness directories, skills, AGENTS.md) is
+    The context Orchestra copied in (agent directories, skills, AGENTS.md) is
     not the run's work and never blocks removal — ``_checkpoint_commit``
     excludes exactly the same paths when it commits.
     """
@@ -490,7 +446,7 @@ def merge_into_owner(root: Path, branch: str) -> dict:
 
 
 def prune(con, force: bool = False) -> dict:
-    """Sweep Orchestra's v2 per-group worktree directories.
+    """Sweep Orchestra-next per-group worktree directories.
 
     An orphan is a worktree whose run row is terminal or gone. A live run's
     worktree is skipped and reported, never removed — not even with --force.
