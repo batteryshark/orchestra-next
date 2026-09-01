@@ -44,7 +44,7 @@ Poll loop (`tick`):
 
 1. If auth is unknown, `GET /api/auth/me`.
 2. On the first pass, `GET /api/events?order=desc&limit=1` seeds `store.cursorsEvents`. After that, up to ten pages of `GET /api/events?after=<cursor>` per tick. The rows are discarded; the call advances the cursor and carries `board_revision` in the envelope.
-3. If `snapshotsStale`, `refreshSnapshots()` fetches `/api/runs?order=desc&limit=200`, `/api/attention?status=open`, `/api/profiles`, `/api/groups` in parallel, plus the open run and its messages. A `404` on the open run toasts and routes to `#/`.
+3. If `snapshotsStale`, `refreshSnapshots()` fetches `/api/runs?<runsQuery(store.filters)>` (`order=desc&limit=200` plus the server-side filters; a changed query clears `store.runs` and resets `store.runsWindow`), `/api/attention?status=open`, `/api/profiles`, `/api/groups` in parallel, plus the open run and its messages. A `404` on the open run toasts and routes to `#/`.
 4. On the run view, `pollRun()` (below).
 5. `schedule()` waits 2 s visible, 30 s hidden. Transport errors (`status 0` or `>= 500`) double the wait up to 30 s; from the second failure a banner shows the retry delay. `visibilitychange` and every successful mutation call `schedule(true)` for an immediate tick.
 
@@ -79,7 +79,7 @@ Dark values are redefined under `@media (prefers-color-scheme: dark)`; `<meta na
 
 ## 5. Views
 
-**Fleet.** Count buttons for running, queued, waiting, failed toggle status filters (`STATUS_GROUPS`: running = starting+running, failed = failed+timed_out). Text, group, and profile filters run client-side over the loaded runs (`filterRuns`). Rows sort by `updated_at`, newest first; waiting and failed rows get a coloured edge, terminal and paused rows go quiet. "Load older runs" pages with `before=<runsFloor>`. The dispatch form (`<details id="new-run">`) sends `POST /api/runs` with a per-form `request_id` from `crypto.randomUUID()`, regenerated after success. Advanced fields: strategy, title, ref, limits, verifier argv and timeout, child ceilings, and `after` dependencies (one `run_id [condition]` per line). `danger-full-access` opens a danger confirm that names the working directory.
+**Fleet.** Count buttons for running, queued, waiting, failed toggle status filters (`STATUS_GROUPS`: running = starting+running, failed = failed+timed_out); goal and ralph buttons toggle a client-side strategy filter. Status, group, and profile filters go to the server: `runsQuery(filters, {before, limit})` builds `status=<csv>`, `group=<id>`, `profile=<id>`; the query string is the signature in `store.runsWindow = {signature, floor, exhausted}`, and a changed signature clears `store.runs` and refetches page one (`refetchFleet()`). Text and strategy run client-side over the loaded runs (`filterRuns`). The counts strip counts the loaded window and shows "in view" while a server-side filter is active. Rows sort by `updated_at`, newest first; waiting and failed rows get a coloured edge, terminal and paused rows go quiet. "Load older runs" pages with the same query plus `before=<runsWindow.floor>`. The dispatch form (`<details id="new-run">`) sends `POST /api/runs` with a per-form `request_id` from `crypto.randomUUID()`, regenerated after success. Advanced fields: strategy, title, ref, limits, verifier argv and timeout, child ceilings, and `after` dependencies (one `run_id [condition]` per line). `danger-full-access` opens a danger confirm that names the working directory.
 
 **Run.** The header shows the label, status (`paused` overrides), waiting detail, and chips: profile, route, permission mode (red for full access), strategy, goal state and rounds (attempts for ralph), repairs, corrected, active time, resume count, cache epoch. `RUN_ACTION_MATRIX` decides the buttons:
 
@@ -148,6 +148,6 @@ A server change is needed when a view cannot be correct or efficient with the cu
 
 ## 9. Known gaps
 
-- Fleet filters run in the browser over the loaded window of 200 runs per page. The server `status`, `group`, and `profile` query parameters are unused; there is no strategy filter and no child count on rows.
+- Fleet rows carry no child count. The counts strip counts the loaded window, not the whole server, once a server-side filter is active.
 - No UI state is retained across reloads: filters and "Show machine events" reset. The console never uses `localStorage`.
 - Evidence shows the verifier argv but not its output or callback records; verifier output appears only on `verification.failed` rows in Activity.

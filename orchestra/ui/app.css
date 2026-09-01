@@ -203,7 +203,8 @@
   main { max-width: 1100px; margin: 0 auto; padding: var(--sp-4) var(--sp-5) var(--sp-6); }
 
   .fleet-top { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-4); flex-wrap: wrap; margin: var(--sp-4) 0; }
-  .counts { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
+  .counts { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+  .counts .muted { font-size: var(--fs-s); }
   .counts button {
     background: var(--soft); border: 1px solid transparent; border-radius: 999px;
     padding: var(--sp-1) var(--sp-4); font-size: var(--fs-s); cursor: pointer; color: var(--muted);
