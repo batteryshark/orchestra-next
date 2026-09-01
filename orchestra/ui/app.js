@@ -191,6 +191,30 @@ function extractText(payload) {
   if (content && typeof content === "object" && typeof content.text === "string") return content.text;
   return "";
 }
+
+// Retained UI state: fleet filters, the machine-events toggle, and the last run
+// section, as one JSON string. Decode tolerates any input and returns defaults.
+const UI_STATE_KEY = "orchestra-next.ui";
+function uiStateEncode(state) {
+  const f = state.filters;
+  const filters = { status: [...f.status], group: f.group, profile: f.profile, text: f.text };
+  if ("strategy" in f) filters.strategy = f.strategy;
+  return JSON.stringify({ filters, machine: Boolean(state.ui.machine), section: state.ui.section });
+}
+function uiStateDecode(raw) {
+  const out = { filters: { status: new Set(), group: "", profile: "", text: "" }, machine: false, section: "activity" };
+  try {
+    const value = JSON.parse(raw);
+    const f = value?.filters ?? {};
+    if (Array.isArray(f.status)) out.filters.status = new Set(f.status.filter((key) => key in STATUS_GROUPS));
+    for (const key of ["group", "profile", "text", "strategy"]) if (typeof f[key] === "string") out.filters[key] = f[key];
+    out.machine = value?.machine === true;
+    if (SECTIONS.includes(value?.section)) out.section = value.section;
+  } catch {
+    // malformed or absent: defaults
+  }
+  return out;
+}
 // --- end logic ---
 
 // --- qr ---
@@ -512,8 +536,29 @@ const store = {
     loaded: { changes: false, usage: false, artifacts: false },
   },
   filters: { status: new Set(), group: "", profile: "", text: "" },
-  ui: { follow: true, inflight: new Set(), dispatchRequestId: crypto.randomUUID() },
+  ui: { follow: true, machine: false, section: "activity", inflight: new Set(), dispatchRequestId: crypto.randomUUID() },
 };
+
+// Retained state lives in one browser storage entry; storage may be unavailable.
+let uiSaveTimer = null;
+function saveUiState() {
+  clearTimeout(uiSaveTimer);
+  uiSaveTimer = setTimeout(() => { try { localStorage.setItem(UI_STATE_KEY, uiStateEncode(store)); } catch { /* storage unavailable */ } }, 200);
+}
+function loadUiState() {
+  let raw = null;
+  try { raw = localStorage.getItem(UI_STATE_KEY); } catch { /* storage unavailable */ }
+  return uiStateDecode(raw);
+}
+function clearFilters() {
+  for (const key of Object.keys(store.filters)) store.filters[key] = key === "status" ? new Set() : "";
+  for (const field of document.querySelectorAll("[data-filter]")) {
+    field.value = "";
+    delete field._pending;
+  }
+  saveUiState();
+  markDirty("fleet");
+}
 
 const dirty = new Set();
 let renderQueued = false;
@@ -865,8 +910,10 @@ const ACTIONS = {
     const key = button.dataset.status;
     if (store.filters.status.has(key)) store.filters.status.delete(key);
     else store.filters.status.add(key);
+    saveUiState();
     markDirty("fleet");
   },
+  "filter-clear": clearFilters,
   "open-run": (node) => {
     location.hash = `#/runs/${node.dataset.run}`;
   },
@@ -1095,8 +1142,10 @@ function fillOptions(select, rows, valueKey, labelKey) {
     if (row.archived) continue;
     select.append(el("option", { value: String(row[valueKey]), text: row[labelKey] }));
   }
-  select.value = previous;
+  // _pending: a restored value whose option was not loaded yet; applied once it exists.
+  select.value = select._pending ?? previous;
   if (select.selectedIndex === -1) select.selectedIndex = 0;
+  else delete select._pending;
 }
 
 function renderFleet() {
@@ -1133,7 +1182,7 @@ function renderFleet() {
   const state = document.getElementById("fleet-state");
   if (store.boardRevision < 0) state.textContent = "Loading runs…";
   else if (!runs.length) state.textContent = "No runs yet. Dispatch the first one with New run.";
-  else if (!visible.length) state.textContent = "No runs match the current filters.";
+  else if (!visible.length) state.replaceChildren("No runs match the current filters. ", el("button", { type: "button", dataset: { action: "filter-clear" }, text: "Clear filters" }));
   state.hidden = Boolean(visible.length) || store.boardRevision < 0 && false;
   state.hidden = Boolean(visible.length);
 
@@ -2649,7 +2698,7 @@ Object.assign(FORMS, {
 function parseHash() {
   const segments = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
   if (segments[0] === "runs" && /^\d+$/.test(segments[1] || "")) {
-    const section = SECTIONS.includes(segments[2]) ? segments[2] : "activity";
+    const section = SECTIONS.includes(segments[2]) ? segments[2] : segments[2] ? "activity" : store.ui.section;
     return { view: "run", runId: Number(segments[1]), section };
   }
   if (segments[0] === "attention") return { view: "attention", runId: null, section: null };
@@ -2676,6 +2725,10 @@ function applyRoute() {
     schedule(true);
   } else if (route.view === "run" && route.section !== previous.section) {
     schedule(true);
+  }
+  if (route.view === "run" && route.section !== store.ui.section) {
+    store.ui.section = route.section;
+    saveUiState();
   }
   markDirty("fleet", "run", "attention", "config", "nav");
 }
@@ -2704,8 +2757,10 @@ function onFilterInput(event) {
   const field = event.target.closest("[data-filter]");
   if (!field) return;
   clearTimeout(filterDebounce);
+  delete field._pending;
   filterDebounce = setTimeout(() => {
     store.filters[field.dataset.filter] = field.value;
+    saveUiState();
     markDirty("fleet");
   }, field.dataset.filter === "text" ? 150 : 0);
 }
@@ -2790,7 +2845,26 @@ document.getElementById("feed").addEventListener("scroll", () => {
 });
 document.getElementById("follow-live").addEventListener("change", (event) => setFollow(event.target.checked));
 document.getElementById("return-live").addEventListener("click", () => setFollow(true));
-document.getElementById("show-machine").addEventListener("change", () => markDirty("run"));
+document.getElementById("show-machine").addEventListener("change", (event) => {
+  store.ui.machine = event.target.checked;
+  saveUiState();
+  markDirty("run");
+});
+
+// Restore retained state before the first route and render.
+{
+  const saved = loadUiState();
+  for (const key of Object.keys(store.filters)) if (key in saved.filters) store.filters[key] = saved.filters[key];
+  store.ui.machine = saved.machine;
+  store.ui.section = saved.section;
+  document.getElementById("show-machine").checked = saved.machine;
+  for (const field of document.querySelectorAll("[data-filter]")) {
+    const value = store.filters[field.dataset.filter];
+    if (typeof value !== "string" || !value) continue;
+    field.value = value;
+    if (field.tagName === "SELECT" && field.value !== value) field._pending = value;
+  }
+}
 
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) schedule(true);

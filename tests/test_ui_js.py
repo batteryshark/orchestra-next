@@ -153,6 +153,29 @@ class UiLogicTests(unittest.TestCase):
         })""")
         self.assertEqual(value, {"plain": "hello", "text": "a", "array": "a\nb", "nothing": ""})
 
+    def test_ui_state_round_trips_and_tolerates_malformed_input(self):
+        value = self.evaluate("""(() => {
+          const state = { filters: { status: new Set(["failed", "running"]), group: "g1", profile: "7", text: "auth", strategy: "swarm" },
+                          ui: { follow: false, machine: true, section: "usage" } };
+          const back = uiStateDecode(uiStateEncode(state));
+          const bad = [uiStateDecode(null), uiStateDecode("{not json"), uiStateDecode('{"filters":{"status":"x","group":3},"section":"nope","machine":"yes"}')];
+          return {
+            key: UI_STATE_KEY,
+            raw: JSON.parse(uiStateEncode(state)),
+            back: { ...back, filters: { ...back.filters, status: [...back.filters.status] } },
+            no_strategy: "strategy" in uiStateDecode(uiStateEncode({ filters: { status: new Set(), group: "", profile: "", text: "" }, ui: {} })).filters,
+            bad: bad.map((b) => ({ ...b, filters: { ...b.filters, status: [...b.filters.status] } })),
+          };
+        })()""")
+        self.assertEqual(value["key"], "orchestra-next.ui")
+        self.assertNotIn("follow", value["raw"])
+        self.assertEqual(value["raw"]["filters"]["strategy"], "swarm")
+        self.assertEqual(value["back"], {"filters": {"status": ["failed", "running"], "group": "g1", "profile": "7", "text": "auth", "strategy": "swarm"},
+                                         "machine": True, "section": "usage"})
+        self.assertFalse(value["no_strategy"])
+        defaults = {"filters": {"status": [], "group": "", "profile": "", "text": ""}, "machine": False, "section": "activity"}
+        self.assertEqual(value["bad"], [defaults] * 3)
+
 
 if __name__ == "__main__":
     unittest.main()

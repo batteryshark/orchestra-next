@@ -53,6 +53,20 @@ class DocumentConformanceTests(unittest.TestCase):
         for form in forms:
             self.assertIn(f"{form}:", self.js, f"FORMS is missing {form}")
 
+    def test_local_storage_access_is_guarded(self):
+        """Every `localStorage` use sits inside a `try`, so a blocked store cannot break the page.
+
+        Limits: this is a line-level check. It accepts a `try` on the same line or on the two
+        lines above, and does not parse block structure. It also requires the single key name."""
+        lines = self.js.splitlines()
+        hits = [i for i, line in enumerate(lines) if "localStorage" in line]
+        self.assertTrue(hits, "expected localStorage use")
+        for i in hits:
+            window = "\n".join(lines[max(0, i - 2):i + 1])
+            self.assertRegex(window, r"\btry\b", f"unguarded localStorage at line {i + 1}")
+        self.assertIn('"orchestra-next.ui"', self.js)
+        self.assertNotRegex(self.js, r'"orchestra\.[a-z]', "V2 key name")
+
     def test_dark_scheme_and_reduced_motion_are_declared(self):
         self.assertIn("prefers-color-scheme: dark", self.css)
         self.assertIn("prefers-reduced-motion: reduce", self.css)
