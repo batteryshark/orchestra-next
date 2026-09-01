@@ -184,6 +184,74 @@
 <!-- end slice2-evidence dialogs -->
 
 <!-- slice2-config dialogs -->
+<dialog id="profile-dialog" class="config-dialog">
+  <form data-form="profile">
+    <h2 id="profile-dialog-title">New profile</h2>
+    <div class="grid2">
+      <label>Name <input name="name" required></label>
+      <label>Slug <input name="slug" class="mono" placeholder="derived from name" spellcheck="false"></label>
+      <label>Provider <input name="provider" class="mono" list="profile-providers" required spellcheck="false"></label>
+      <label>Model <input name="model" class="mono" list="profile-models" required spellcheck="false"></label>
+      <label>Effort <input name="effort" class="mono" list="profile-efforts" placeholder="default" spellcheck="false"></label>
+      <label>Tier <input name="tier" type="number" min="1" max="3" value="1" required></label>
+      <label>Max concurrency <input name="max_concurrency" type="number" min="1" placeholder="unlimited"></label>
+    </div>
+    <label>Note <input name="note"></label>
+    <datalist id="profile-providers"></datalist>
+    <datalist id="profile-models"></datalist>
+    <datalist id="profile-efforts"></datalist>
+    <p class="form-error" hidden></p>
+    <div class="dialog-buttons">
+      <button type="button" class="btn" data-action="dialog-cancel">Cancel</button>
+      <button type="submit" class="btn btn-primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="group-dialog" class="config-dialog">
+  <form data-form="group">
+    <h2>New group</h2>
+    <label>Name <input name="name" required></label>
+    <label>Slug <input name="slug" class="mono" placeholder="derived from name" spellcheck="false"></label>
+    <label>Default directory <input name="cwd" class="mono" placeholder="none" spellcheck="false"></label>
+    <p class="form-error" hidden></p>
+    <div class="dialog-buttons">
+      <button type="button" class="btn" data-action="dialog-cancel">Cancel</button>
+      <button type="submit" class="btn btn-primary">Create group</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="token-dialog" class="config-dialog">
+  <form data-form="token">
+    <h2>New service token</h2>
+    <label>Name <input name="name" required placeholder="integration"></label>
+    <fieldset class="permission">
+      <legend>Authorities</legend>
+      <label><input type="checkbox" name="authorities" value="read"> read</label>
+      <label><input type="checkbox" name="authorities" value="dispatch"> dispatch</label>
+      <label><input type="checkbox" name="authorities" value="attention-answer"> attention-answer</label>
+      <label><input type="checkbox" name="authorities" value="reroute"> reroute</label>
+      <label><input type="checkbox" name="authorities" value="resume"> resume</label>
+      <label><input type="checkbox" name="authorities" value="retry"> retry</label>
+      <label><input type="checkbox" name="authorities" value="stop"> stop</label>
+    </fieldset>
+    <p class="form-error" hidden></p>
+    <div class="dialog-buttons">
+      <button type="button" class="btn" data-action="dialog-cancel">Cancel</button>
+      <button type="submit" class="btn btn-primary">Create token</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="token-reveal" class="config-dialog">
+  <h2>Service token created</h2>
+  <p>Copy the token now. The console shows it once and never stores it.</p>
+  <pre id="token-raw" class="token-raw"></pre>
+  <div class="dialog-buttons">
+    <button type="button" class="btn btn-primary" data-action="dialog-cancel">Done</button>
+  </div>
+</dialog>
 <!-- end slice2-config dialogs -->
 
 <!-- slice3-admin dialogs -->
