@@ -217,6 +217,37 @@ function uiStateDecode(raw) {
 }
 // --- end logic ---
 
+// --- attention-logic ---
+// The last few meaningful journal rows at or before an attention item opened: assistant
+// text (or reasoning when there is no text), tool calls, and verification failures.
+// Pure (no DOM, no store); tests/test_ui_attention.py slices this block.
+function attentionLeadUp(events, createdAt, limit = 4) {
+  const cutoff = createdAt ? Date.parse(createdAt) : Infinity;
+  const rows = [];
+  for (const event of events || []) {
+    if (Date.parse(event.created_at) > cutoff) continue;
+    const payload = event.payload || {};
+    let kind, text;
+    if (event.type === "dsh.assistant/message") {
+      const parts = messageParts(payload);
+      const source = parts.text.length ? parts.text : parts.reasoning;
+      if (!source.length) continue;
+      kind = parts.text.length ? "text" : "reasoning";
+      text = `${kind === "text" ? "💬" : "💭"} ${fmt.excerpt(source.join("\n").trim(), 200)}`;
+    } else if (event.type === "acp.tool_call") {
+      kind = "tool";
+      text = `⚙ ${payload.title || payload.name || "tool"}`;
+    } else if (event.type === "verification.failed") {
+      kind = "verification";
+      text = `❌ verification failed${payload.output ? ` — ${fmt.excerpt(String(payload.output).trim(), 200)}` : ""}`;
+    } else continue;
+    rows.push({ at: event.created_at, id: event.id ?? 0, kind, text });
+  }
+  rows.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.id - b.id));
+  return rows.slice(-limit).map(({ at, kind, text }) => ({ at, kind, text }));
+}
+// --- end attention-logic ---
+
 // --- qr ---
 // QR encoder: byte mode, error correction level M, versions 1 to 10. Pure
 // functions only (no DOM): tests/test_ui_qr.py slices this block, runs it
@@ -1678,6 +1709,35 @@ function renderRun() {
 
 const KIND_CLASSES = { permission: "warn", protocol_failure: "bad", verification: "warn" };
 
+// Lead-up rows per open attention item, fetched once (the lead-up is historical, so
+// revision changes never refetch). renderAttention drops entries that left the inbox.
+store.attentionContext = {}; // attention_id -> { rows: [{at, kind, text}] | null, error: bool }
+
+function fillLeadUp(node, entry) {
+  const title = el("div", { class: "att-meta", text: "Before this question" });
+  if (!entry.rows) return node.replaceChildren(title, el("div", { text: entry.error ? "Could not load activity" : "Loading…" }));
+  if (!entry.rows.length) return node.replaceChildren(title, el("div", { text: "No assistant activity recorded before this item" }));
+  node.replaceChildren(title, el("ul", null, entry.rows.map((row) =>
+    el("li", null, el("span", { class: "att-meta", title: row.at, text: fmt.rel(row.at) }), " ", row.text))));
+}
+
+function leadUpNode(item) {
+  const node = el("div", { class: "att-leadup" });
+  let entry = store.attentionContext[item.attention_id];
+  if (!entry) {
+    entry = store.attentionContext[item.attention_id] = { rows: null, error: false };
+    api.get(`/api/runs/${item.run_id}/events?order=desc&limit=80`)
+      .then((events) => { entry.rows = attentionLeadUp(events, item.created_at); })
+      .catch(() => { entry.error = true; })
+      .then(() => {
+        const live = document.querySelector(`#attention-list .att-item[data-attention="${item.attention_id}"] .att-leadup`);
+        if (live) fillLeadUp(live, entry);
+      });
+  }
+  fillLeadUp(node, entry);
+  return node;
+}
+
 function buildAttentionItem(item) {
   const answered = item.status !== "open";
   const form = el("form", { dataset: { form: "answer", attention: item.attention_id } },
@@ -1706,6 +1766,7 @@ function buildAttentionItem(item) {
       expiry, lease,
       el("a", { class: "att-meta", href: `#/runs/${item.run_id}`, text: "open activity →" })),
     run ? el("p", { class: "att-run-context", title: run.objective, text: `🎯 ${fmt.excerpt(run.objective, 200)}` }) : null,
+    answered ? null : leadUpNode(item),
     el("p", { class: "att-prompt", text: item.prompt }),
     contextNode,
     options ? el("div", { class: "att-options" }, options.map((option) => el("button", { type: "button", class: "btn", dataset: { action: "answer-option", value: option }, text: option }))) : null,
@@ -1718,6 +1779,8 @@ function renderAttention() {
   const list = document.getElementById("attention-list");
   const state = document.getElementById("attention-state");
   const open = store.attention;
+  const openIds = new Set(open.map((item) => item.attention_id));
+  for (const id of Object.keys(store.attentionContext)) if (!openIds.has(id)) delete store.attentionContext[id];
   state.hidden = open.length > 0;
   if (store.boardRevision >= 0) state.textContent = "Nothing needs attention.";
   const byRun = new Map();
