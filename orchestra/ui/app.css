@@ -354,6 +354,12 @@
   /* end slice2-evidence */
 
   /* slice2-config */
+  .config-dialog { width: min(34em, 92vw); }
+  .config-toolbar { margin: var(--sp-3) 0; }
+  .config-sub { font-size: var(--fs-s); color: var(--muted); margin: var(--sp-4) 0 var(--sp-2); }
+  .row-actions { display: flex; gap: var(--sp-2); white-space: nowrap; }
+  .row-actions .btn { padding: 0 var(--sp-3); font-size: var(--fs-xs); }
+  .token-raw { background: var(--soft); border-radius: var(--radius-s); padding: var(--sp-3); user-select: all; }
   /* end slice2-config */
 
   /* slice3-admin */

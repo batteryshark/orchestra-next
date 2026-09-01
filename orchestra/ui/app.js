@@ -224,6 +224,7 @@ async function req(method, path, body) {
 const api = {
   get: (path) => req("GET", path),
   post: (path, body) => req("POST", path, body ?? {}),
+  patch: (path, body) => req("PATCH", path, body),
 };
 // --- end api ---
 
@@ -1420,7 +1421,33 @@ function renderConfig() {
   renderConfigDiagnostics();
 }
 
-function renderConfigIdentities() {}
+function renderConfigIdentities() {
+  const box = document.getElementById("config-identities");
+  const data = store.identities;
+  if (!data || data.revision !== store.boardRevision) loadIdentities();
+  if (!data) {
+    configFrame(box, el("p", { class: "view-state", text: "Loading identities…" }));
+    return;
+  }
+  const seen = (iso) => el("td", { title: iso || "", text: fmt.rel(iso) });
+  const revokeButton = (action, id, name) => el("button", { class: "btn btn-danger", dataset: { action, id, name }, text: "Revoke" });
+  const devices = el("table", { class: "plain" }, tableHead(["Name", "Created", "Last seen", "State", ""]),
+    el("tbody", null, ...data.devices.map((device) => el("tr", { class: device.revoked_at ? "faint" : null },
+      el("td", { text: device.name }), seen(device.created_at), seen(device.last_seen_at),
+      el("td", { text: device.revoked_at ? "revoked" : device.device_id === store.me?.id ? "this browser" : "active" }),
+      el("td", { class: "row-actions" }, device.revoked_at ? null : revokeButton("device-revoke", device.device_id, device.name))))));
+  const tokens = el("table", { class: "plain" }, tableHead(["Name", "Authorities", "Created", "Last seen", "State", ""]),
+    el("tbody", null, ...data.tokens.map((token) => el("tr", { class: token.revoked_at ? "faint" : null },
+      el("td", { text: token.name }), el("td", { class: "mono", text: token.authorities.join(", ") }),
+      seen(token.created_at), seen(token.last_seen_at),
+      el("td", { text: token.revoked_at ? "revoked" : "active" }),
+      el("td", { class: "row-actions" }, token.revoked_at ? null : revokeButton("token-revoke", token.token_id, token.name))))));
+  configFrame(box,
+    el("h3", { class: "config-sub", text: "Devices" }), devices,
+    el("h3", { class: "config-sub", text: "Service tokens" }),
+    el("p", { class: "config-toolbar" }, el("button", { class: "btn btn-primary", dataset: { action: "token-new" }, text: "New service token…" })),
+    data.tokens.length ? tokens : el("p", { class: "view-state", text: "No service tokens." }));
+}
 function renderConfigPairing() {}
 function renderConfigStorage() {}
 function renderConfigAudit() {}
@@ -1428,30 +1455,42 @@ function renderConfigAudit() {}
 function renderConfigProfiles() {
   const profiles = document.getElementById("config-profiles");
   const profileTable = el("table", { class: "plain" },
-    el("thead", null, el("tr", null, ...["Name", "Slug", "Route", "Tier", "Concurrency", "State", "Rev"].map((h) => el("th", { text: h })))),
-    el("tbody", null, ...store.profiles.map((profile) => el("tr", null,
+    tableHead(["Name", "Slug", "Route", "Tier", "Concurrency", "State", "Rev", ""]),
+    el("tbody", null, ...store.profiles.map((profile) => el("tr", { class: profile.archived ? "faint" : null },
       el("td", { text: profile.name }),
       el("td", { class: "mono", text: profile.slug }),
       el("td", { class: "mono", text: `${profile.provider}/${profile.model}${profile.effort ? "·" + profile.effort : ""}` }),
       el("td", { text: String(profile.tier) }),
       el("td", { text: profile.max_concurrency == null ? "" : String(profile.max_concurrency) }),
       el("td", { text: profile.archived ? "archived" : profile.enabled === false ? "disabled" : "enabled" }),
-      el("td", { text: String(profile.revision) })))));
-  profiles.replaceChildren(store.profiles.length ? profileTable : el("p", { class: "view-state", text: "No profiles. Create one with the CLI: orchestra-next profile-create." }));
+      el("td", { text: String(profile.revision) }),
+      el("td", { class: "row-actions" },
+        el("button", { class: "btn", dataset: { action: "profile-edit", slug: profile.slug }, text: "Edit" }),
+        el("button", { class: "btn", dataset: { action: "profile-toggle", slug: profile.slug, field: "enabled" }, text: profile.enabled === false ? "Enable" : "Disable" }),
+        el("button", { class: "btn", dataset: { action: "profile-toggle", slug: profile.slug, field: "archived" }, text: profile.archived ? "Unarchive" : "Archive" }))))));
+  configFrame(profiles,
+    el("p", { class: "config-toolbar" }, el("button", { class: "btn btn-primary", dataset: { action: "profile-new" }, text: "New profile…" })),
+    store.profiles.length ? profileTable : el("p", { class: "view-state", text: "No profiles yet. Create one with New profile." }));
 }
 
 function renderConfigGroups() {
   const groupsBox = document.getElementById("config-groups");
   const groupTable = el("table", { class: "plain" },
-    el("thead", null, el("tr", null, ...["Name", "Slug", "Default cwd", "Concurrency", "State", "Rev"].map((h) => el("th", { text: h })))),
-    el("tbody", null, ...store.groups.map((group) => el("tr", null,
+    tableHead(["Name", "Slug", "Default cwd", "Concurrency", "State", "Rev", ""]),
+    el("tbody", null, ...store.groups.map((group) => el("tr", { class: group.archived ? "faint" : null },
       el("td", { text: group.name }),
       el("td", { class: "mono", text: group.slug }),
       el("td", { class: "mono", text: group.default_cwd || "" }),
       el("td", { text: group.max_concurrency == null ? "" : String(group.max_concurrency) }),
       el("td", { text: group.archived ? "archived" : "active" }),
-      el("td", { text: String(group.revision) })))));
-  groupsBox.replaceChildren(groupTable);
+      el("td", { text: String(group.revision) }),
+      el("td", { class: "row-actions" },
+        el("button", { class: "btn", dataset: { action: "group-rename", slug: group.slug }, text: "Rename" }),
+        el("button", { class: "btn", dataset: { action: "group-cwd", slug: group.slug }, text: "Set directory" }),
+        el("button", { class: "btn", dataset: { action: "group-archive", slug: group.slug }, text: group.archived ? "Unarchive" : "Archive" }))))));
+  configFrame(groupsBox,
+    el("p", { class: "config-toolbar" }, el("button", { class: "btn btn-primary", dataset: { action: "group-new" }, text: "New group…" })),
+    store.groups.length ? groupTable : el("p", { class: "view-state", text: "No groups yet. Create one with New group." }));
 }
 
 function renderConfigDiagnostics() {
@@ -1510,7 +1549,264 @@ function render() {
 // --- end slice2-evidence ---
 
 // --- slice2-config ---
+store.models = null; // /api/models catalog rows, or null until loaded
+store.modelsError = "";
+store.identities = null; // { devices, tokens, revision }
+
+function tableHead(labels) {
+  return el("thead", null, el("tr", null, ...labels.map((label) => el("th", { text: label }))));
+}
+
+function configError(box, message) {
+  const node = box._error ||= el("p", { class: "form-error" });
+  node.textContent = message || "";
+  node.hidden = !message;
+  if (!node.isConnected) box.prepend(node);
+}
+
+function configFrame(box, ...children) {
+  const previous = box._error?.hidden === false ? box._error.textContent : "";
+  box.replaceChildren(...children);
+  configError(box, previous);
+}
+
+function configMutation(key, button, boxId, work, success) {
+  const box = document.getElementById(boxId);
+  return act(key, button, async () => {
+    try {
+      await work();
+      configError(box, "");
+      toast(success);
+    } catch (error) {
+      configError(box, error.message);
+    }
+    if (store.identities) store.identities.revision = -1;
+    store.snapshotsStale = true;
+    schedule(true);
+  });
+}
+
+function loadIdentities() {
+  const revision = store.boardRevision;
+  return act("identities", null, async () => {
+    const [devices, tokens] = await Promise.all([api.get("/api/auth/devices"), api.get("/api/auth/service-tokens")]);
+    store.identities = { devices, tokens, revision };
+    markDirty("config");
+  }).catch((error) => configError(document.getElementById("config-identities"), error.message));
+}
+
+function loadModels(form) {
+  return api.get("/api/models").then((value) => {
+    store.models = value.models;
+    store.modelsError = "";
+  }).catch((error) => {
+    store.models = null;
+    store.modelsError = `Model catalog unavailable (${error.message}). Enter provider, model, and effort by hand.`;
+  }).then(() => {
+    fillRouteLists(form);
+    formError(form, store.modelsError);
+  });
+}
+
+function fillRouteLists(form) {
+  const models = store.models || [];
+  const provider = form.elements.provider.value.trim();
+  const model = form.elements.model.value.trim();
+  const option = (value) => el("option", { value });
+  document.getElementById("profile-providers").replaceChildren(...[...new Set(models.map((row) => row.provider))].map(option));
+  document.getElementById("profile-models").replaceChildren(...models.filter((row) => !provider || row.provider === provider).map((row) => option(row.model)));
+  document.getElementById("profile-efforts").replaceChildren(...modelEfforts(models, provider, model).map(option));
+}
+
+function openProfileDialog(profile) {
+  const dialog = document.getElementById("profile-dialog");
+  const form = dialog.querySelector("form");
+  form.reset();
+  form._original = profile || null;
+  document.getElementById("profile-dialog-title").textContent = profile ? `Edit profile ${profile.slug}` : "New profile";
+  form.elements.slug.closest("label").hidden = Boolean(profile);
+  if (profile) for (const key of PROFILE_FIELDS) form.elements[key].value = profile[key] ?? "";
+  formError(form, store.modelsError);
+  fillRouteLists(form);
+  dialog.showModal();
+  if (store.models === null) loadModels(form);
+}
+
+async function groupEdit(button, field) {
+  const group = store.groups.find((row) => row.slug === button.dataset.slug);
+  if (!group) return;
+  let value;
+  if (field === "archived") {
+    value = !group.archived;
+    const sure = await confirmDialog({
+      title: `${value ? "Archive" : "Unarchive"} group ${group.slug}?`,
+      body: value ? "Archived groups leave the dispatch form. Existing runs keep their group." : "",
+      confirmLabel: value ? "Archive" : "Unarchive",
+      danger: value,
+    });
+    if (!sure) return;
+  } else {
+    const typed = await confirmDialog({
+      title: field === "name" ? `Rename group ${group.slug}` : `Set default directory for ${group.slug}`,
+      body: field === "name" ? `Current name: ${group.name}` : `Current: ${group.default_cwd || "none"}. Leave blank to clear.`,
+      confirmLabel: "Save",
+      input: field === "name" ? "Name" : "Directory",
+    });
+    if (typed === false) return;
+    value = typed.trim() || null;
+  }
+  const retained = typeof value === "string" ? ` (you entered: ${value})` : "";
+  await configMutation(`group:${group.slug}:${field}`, button, "config-groups", async () => {
+    try {
+      await api.patch(`/api/groups/${group.slug}`, groupPatch(field, value, group.revision));
+    } catch (error) {
+      throw new ApiError(error.status, error.message + retained);
+    }
+  }, `Group ${group.slug} updated`);
+}
+
+Object.assign(ACTIONS, {
+  "dialog-cancel": (button) => button.closest("dialog").close(),
+  "profile-new": () => openProfileDialog(null),
+  "profile-edit": (button) => {
+    const profile = store.profiles.find((row) => row.slug === button.dataset.slug);
+    if (profile) openProfileDialog(profile);
+  },
+  "profile-toggle": (button) => {
+    const profile = store.profiles.find((row) => row.slug === button.dataset.slug);
+    const field = button.dataset.field;
+    if (!profile) return;
+    const next = field === "enabled" ? profile.enabled === false : !profile.archived;
+    return configMutation(`profile:${profile.slug}:${field}`, button, "config-profiles",
+      () => api.patch(`/api/profiles/${profile.slug}`, { expected_revision: profile.revision, [field]: next }),
+      `Profile ${profile.slug} ${field === "enabled" ? (next ? "enabled" : "disabled") : (next ? "archived" : "unarchived")}`);
+  },
+  "group-new": () => {
+    const dialog = document.getElementById("group-dialog");
+    formError(dialog.querySelector("form"), "");
+    dialog.showModal();
+  },
+  "group-rename": (button) => groupEdit(button, "name"),
+  "group-cwd": (button) => groupEdit(button, "cwd"),
+  "group-archive": (button) => groupEdit(button, "archived"),
+  "token-new": () => {
+    const dialog = document.getElementById("token-dialog");
+    formError(dialog.querySelector("form"), "");
+    dialog.showModal();
+  },
+  "device-revoke": async (button) => {
+    const sure = await confirmDialog({ title: `Revoke device ${button.dataset.name}?`, body: "The device loses access immediately.", confirmLabel: "Revoke", danger: true });
+    if (!sure) return;
+    return configMutation(`device:${button.dataset.id}`, button, "config-identities", () => api.post(`/api/auth/devices/${button.dataset.id}/revoke`), "Device revoked");
+  },
+  "token-revoke": async (button) => {
+    const sure = await confirmDialog({ title: `Revoke service token ${button.dataset.name}?`, body: "Integrations that hold this token lose access immediately.", confirmLabel: "Revoke", danger: true });
+    if (!sure) return;
+    return configMutation(`token:${button.dataset.id}`, button, "config-identities", () => api.post(`/api/auth/service-tokens/${button.dataset.id}/revoke`), "Service token revoked");
+  },
+});
+
+Object.assign(FORMS, {
+  profile: (form) => act("profile", form.querySelector("button[type=submit]"), async () => {
+    const raw = Object.fromEntries(["slug", ...PROFILE_FIELDS].map((key) => [key, form.elements[key].value]));
+    const original = form._original;
+    const body = profileBody(raw);
+    try {
+      if (original) {
+        const patch = profilePatch(original, body);
+        if (Object.keys(patch).length > 1) await api.patch(`/api/profiles/${original.slug}`, patch);
+      } else {
+        await api.post("/api/profiles", body);
+      }
+      formError(form, "");
+      form.closest("dialog").close();
+      toast(original ? `Profile ${original.slug} updated` : `Profile ${body.slug || body.name} created`);
+      store.snapshotsStale = true;
+      schedule(true);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409 && original) {
+        // Refresh the row, keep the operator's edits, and reload only the fields they left alone.
+        const edited = profilePatch(original, body);
+        store.profiles = await api.get("/api/profiles").catch(() => store.profiles);
+        const fresh = store.profiles.find((row) => row.id === original.id) || original;
+        form._original = fresh;
+        for (const key of PROFILE_FIELDS) if (!(key in edited)) form.elements[key].value = fresh[key] ?? "";
+        markDirty("config");
+        formError(form, `This profile changed elsewhere (now revision ${fresh.revision}). Your edits are kept; review them and save again.`);
+      } else {
+        formError(form, error.message);
+      }
+    }
+  }),
+  group: (form) => act("group", form.querySelector("button[type=submit]"), async () => {
+    const body = { name: form.elements.name.value.trim() };
+    if (form.elements.slug.value.trim()) body.slug = form.elements.slug.value.trim();
+    if (form.elements.cwd.value.trim()) body.cwd = form.elements.cwd.value.trim();
+    try {
+      const group = await api.post("/api/groups", body);
+      formError(form, "");
+      form.closest("dialog").close();
+      form.reset();
+      toast(`Group ${group.slug} created`);
+      store.snapshotsStale = true;
+      schedule(true);
+    } catch (error) {
+      formError(form, error.message);
+    }
+  }),
+  token: (form) => act("token", form.querySelector("button[type=submit]"), async () => {
+    const authorities = [...form.querySelectorAll("input[name=authorities]:checked")].map((box) => box.value);
+    try {
+      const { token } = await api.post("/api/auth/service-tokens", { name: form.elements.name.value.trim(), authorities });
+      formError(form, "");
+      form.closest("dialog").close();
+      form.reset();
+      document.getElementById("token-raw").textContent = token;
+      document.getElementById("token-reveal").showModal();
+      if (store.identities) store.identities.revision = -1;
+      markDirty("config");
+    } catch (error) {
+      formError(form, error.message);
+    }
+  }),
+});
+
+document.querySelector("form[data-form=profile]").addEventListener("input", (event) => fillRouteLists(event.currentTarget));
+document.getElementById("token-reveal").addEventListener("close", () => { document.getElementById("token-raw").textContent = ""; });
 // --- end slice2-config ---
+
+// --- config-logic ---
+const PROFILE_FIELDS = ["name", "provider", "model", "effort", "tier", "max_concurrency", "note"];
+
+function profileBody(raw) {
+  const text = (key) => String(raw[key] ?? "").trim();
+  const body = {
+    name: text("name"), provider: text("provider"), model: text("model"),
+    effort: text("effort") || null,
+    tier: Number(text("tier")),
+    max_concurrency: text("max_concurrency") ? Number(text("max_concurrency")) : null,
+    note: text("note") || null,
+  };
+  if (text("slug")) body.slug = text("slug");
+  return body;
+}
+
+function profilePatch(original, body) {
+  const patch = { expected_revision: original.revision };
+  for (const key of PROFILE_FIELDS) {
+    if (key in body && body[key] !== (original[key] ?? null)) patch[key] = body[key];
+  }
+  return patch;
+}
+
+function groupPatch(field, value, revision) {
+  return { expected_revision: revision, [field]: value };
+}
+
+function modelEfforts(models, provider, model) {
+  return models.find((row) => row.provider === provider && row.model === model)?.efforts || [];
+}
+// --- end config-logic ---
 
 // --- slice3-admin ---
 // --- end slice3-admin ---
