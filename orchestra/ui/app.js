@@ -600,7 +600,7 @@ function clearFilters() {
     delete field._pending;
   }
   saveUiState();
-  markDirty("fleet");
+  refetchFleet();
 }
 
 const dirty = new Set();
@@ -835,7 +835,15 @@ async function refreshSnapshots() {
     store.runsWindow = { signature, floor: null, exhausted: false };
   }
   const [runs, attention, profiles, groups] = await Promise.all([
-    api.get(`/api/runs?${signature}`),
+    api.get(`/api/runs?${signature}`).catch((error) => {
+      // A restored group/profile id can point at a record that no longer exists; drop it rather than 400 every tick.
+      if (!(error instanceof ApiError) || error.status !== 400 || !(store.filters.group || store.filters.profile)) throw error;
+      store.filters.group = store.filters.profile = "";
+      for (const field of document.querySelectorAll("select[data-filter]")) { field.value = ""; delete field._pending; }
+      saveUiState();
+      toast("A saved group or profile filter no longer exists; cleared");
+      return api.get(`/api/runs?${runsQuery(store.filters)}`);
+    }),
     api.get("/api/attention?status=open"),
     api.get("/api/profiles"),
     api.get("/api/groups"),
@@ -1246,10 +1254,10 @@ function renderFleet() {
 
   const visible = filterRuns(runs, store.filters);
   const state = document.getElementById("fleet-state");
+  const filtering = runsQuery(store.filters) !== runsQuery({ status: new Set() }) || store.filters.text.trim() || store.filters.strategy;
   if (store.boardRevision < 0) state.textContent = "Loading runs…";
-  else if (!runs.length) state.textContent = "No runs yet. Dispatch the first one with New run.";
+  else if (!runs.length && !filtering) state.textContent = "No runs yet. Dispatch the first one with New run.";
   else if (!visible.length) state.replaceChildren("No runs match the current filters. ", el("button", { type: "button", dataset: { action: "filter-clear" }, text: "Clear filters" }));
-  state.hidden = Boolean(visible.length) || store.boardRevision < 0 && false;
   state.hidden = Boolean(visible.length);
 
   const list = document.getElementById("run-list");
