@@ -112,9 +112,15 @@ class ConsoleApiTests(StateCase):
         try:
             cached = self.call("GET", "/api/models").data["data"]
             self.assertEqual(cached["models"], value["models"])
+            throttled = self.call("GET", "/api/models", query={"refresh": "1"}).data["data"]
+            self.assertEqual(throttled["checked_at"], value["checked_at"], "a refresh within the floor serves the cache")
         finally:
             dsh.catalog = original
+        with self.assertRaises(api.Problem) as problem:
+            self.call("POST", "/api/auth/bootstrap", {"name": "x"})
+        self.assertEqual(problem.exception.status, 404)
         os.environ["ORCHESTRA_NEXT_DSH"] = "/nonexistent/dsh"
+        dsh._CATALOG = None  # an empty cache is never throttled
         with self.assertRaises(api.Problem) as problem:
             self.call("GET", "/api/models", query={"refresh": "1"})
         self.assertEqual(problem.exception.status, 503)
@@ -214,6 +220,10 @@ class ConsoleApiTests(StateCase):
         with self.assertRaises(api.Problem) as problem:
             self.call("PATCH", "/api/profiles/fake", {"note": "no revision"})
         self.assertIn("expected_revision", str(problem.exception))
+        with self.assertRaises(api.Problem) as problem:
+            self.call("PATCH", "/api/profiles/fake", {"expected_revision": 1, "actor": "spoof"})
+        self.assertEqual(problem.exception.status, 400)
+        self.assertIn("actor", str(problem.exception))
 
     def test_readiness_reports_dsh_and_claude_state(self):
         value = self.call("GET", "/api/readiness").data["data"]

@@ -77,7 +77,6 @@ Bearer types are operator devices, scoped services, and active run workers. Serv
 Bootstrap and pairing endpoints:
 
 ```text
-POST /api/auth/bootstrap
 POST /api/auth/pair
 POST /api/auth/pair/redeem
 POST /api/auth/service-tokens

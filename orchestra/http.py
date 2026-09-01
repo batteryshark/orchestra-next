@@ -4,6 +4,9 @@ from __future__ import annotations
 import http.cookies
 import ipaddress
 import json
+import os
+import shutil
+import sys
 import threading
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,8 +20,9 @@ STATIC = {
     "/app.css": ("app.css", "text/css; charset=utf-8"),
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
 }
-CSP = ("default-src 'self'; img-src 'self' data:; base-uri 'none'; "
+CSP = ("default-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; "
        "frame-ancestors 'none'; form-action 'self'")
+MAX_BODY = 1024 * 1024
 ALLOWED_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 TAILNET_NETWORKS = (ipaddress.ip_network("100.64.0.0/10"), ipaddress.ip_network("fd7a:115c:a1e0::/48"))
 LOOPBACK_NETWORKS = (ipaddress.ip_network("127.0.0.0/8"), ipaddress.ip_network("::1/128"))
@@ -40,6 +44,7 @@ class Server(ThreadingHTTPServer):
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "OrchestraNext"
+    timeout = 30  # a stalled client releases its handler thread
 
     def log_message(self, format, *args):
         return
@@ -75,10 +80,17 @@ class Handler(BaseHTTPRequestHandler):
             return False
         try:
             address = ipaddress.ip_address(self.client_address[0])
-        except ValueError:
+            local = ipaddress.ip_address(self.connection.getsockname()[0])
+        except (ValueError, OSError):
             return False
         if address.version == 6 and address.ipv4_mapped:
             address = address.ipv4_mapped
+        if local.version == 6 and local.ipv4_mapped:
+            local = local.ipv4_mapped
+        # A same-host process reaching the daemon through its tailnet/LAN address is
+        # not a remote peer; only trust_loopback vouches for local processes.
+        if address == local and not address.is_loopback:
+            return False
         return any(address in network for network in self.server.trusted_networks)
 
     def _static(self, path: str):
@@ -113,10 +125,15 @@ class Handler(BaseHTTPRequestHandler):
         if self.command == "GET" and parsed.path in STATIC:
             return self._static(parsed.path)
         query = {key: values[-1] for key, values in urllib.parse.parse_qs(parsed.query).items()}
-        length = int(self.headers.get("Content-Length", "0") or 0)
+        try:
+            length = max(0, int(self.headers.get("Content-Length", "0") or 0))
+        except ValueError:
+            return self._json(400, {"error": {"message": "invalid Content-Length"}})
+        if length > MAX_BODY:
+            return self._json(413, {"error": {"message": f"request body exceeds {MAX_BODY} bytes"}})
         try:
             body = json.loads(self.rfile.read(length)) if length else None
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, UnicodeDecodeError):
             return self._json(400, {"error": {"message": "invalid JSON"}})
         token, from_cookie = self._credentials()
         peer_trusted = self._peer_trusted()
@@ -136,20 +153,23 @@ class Handler(BaseHTTPRequestHandler):
                 identity = auth.network_identity(self.client_address[0])
             result = api.API(con).handle(self.command, parsed.path, query, body, identity)
             if isinstance(result, api.FileResponse):
-                data = result.path.read_bytes()
-                self.send_response(result.status)
-                self.send_header("Content-Type", result.media_type)
-                self.send_header("Content-Length", str(len(data)))
-                for key, item in (result.headers or {}).items():
-                    self.send_header(key, item)
-                self.end_headers(); self.wfile.write(data); return
+                with result.path.open("rb") as handle:
+                    self.send_response(result.status)
+                    self.send_header("Content-Type", result.media_type)
+                    self.send_header("Content-Length", str(os.fstat(handle.fileno()).st_size))
+                    for key, item in (result.headers or {}).items():
+                        self.send_header(key, item)
+                    self.end_headers()
+                    shutil.copyfileobj(handle, self.wfile)
+                return
             self._json(result.status, result.data, result.headers)
         except api.Problem as exc:
             self._json(exc.status, {"error": {"message": str(exc)}})
         except (ValueError, LookupError, auth.AuthError) as exc:
             self._json(400, {"error": {"message": str(exc)}})
         except Exception as exc:
-            self._json(500, {"error": {"message": str(exc)}})
+            print(f"orchestra-next: {self.command} {parsed.path}: {exc!r}", file=sys.stderr)
+            self._json(500, {"error": {"message": "internal error; see the daemon log"}})
         finally:
             con.close()
 

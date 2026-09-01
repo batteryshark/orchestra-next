@@ -10,6 +10,8 @@ from orchestra import artifacts, attention, auth, child_runs, claude, db, dsh, g
 from orchestra.contracts import ContractError, RunRequest
 
 PREFIX = "/api"
+PROFILE_FIELDS = frozenset(("name", "provider", "model", "effort", "tier", "max_concurrency", "enabled", "archived", "note"))
+CATALOG_REFRESH_FLOOR = 10.0  # seconds; a refresh sooner than this serves the cache (each probe spawns DSH)
 
 
 @dataclass
@@ -106,12 +108,6 @@ class API:
             return Response(200, envelope(self.con, {"status": "ok"}))
         if path == PREFIX + "/openapi.json" and method == "GET":
             return Response(200, openapi())
-        if path == PREFIX + "/auth/bootstrap" and method == "POST":
-            try:
-                device, token = auth.bootstrap_device(self.con, _body(body).get("name", "First device"))
-            except auth.AuthError as exc:
-                raise Problem(409, str(exc)) from exc
-            return Response(201, envelope(self.con, {"device": device, "token": token}))
         if path == PREFIX + "/auth/pair/redeem" and method == "POST":
             data = _body(body)
             device, token = auth.redeem_pairing(self.con, data.get("pairing_id", ""), data.get("code", ""), data.get("name", ""))
@@ -201,7 +197,10 @@ class API:
                 _need(identity, "reroute", target=run_id)
                 data = _body(body)
                 provider, model, effort = data.get("provider"), data.get("model"), data.get("effort")
-                catalog = dsh.catalog(run["workdir"] or run["cwd"])
+                try:
+                    catalog, _ = dsh.cached_catalog(run["workdir"] or run["cwd"])
+                except dsh.DshError as exc:
+                    raise Problem(503, str(exc)) from exc
                 if (provider, model) not in catalog or effort is not None and effort not in catalog[(provider, model)]:
                     raise Problem(400, "route is not advertised by DSH ACP")
                 item = messaging.queue(self.con, run_id, kind="reroute", body=json.dumps({"provider": provider, "model": model, "effort": effort, "body": data.get("message")}), sender=_actor(identity))
@@ -251,7 +250,10 @@ class API:
                     return Response(200, envelope(self.con, {"status": "", "diff": ""}))
                 import subprocess
                 status = worktree.status(Path(run["workdir"]))
-                diff = subprocess.run(["git", "-C", run["workdir"], "diff", run["start_ref"] or "HEAD"], capture_output=True, text=True).stdout
+                try:
+                    diff = subprocess.run(["git", "-C", run["workdir"], "diff", run["start_ref"] or "HEAD"], capture_output=True, text=True, timeout=30).stdout
+                except subprocess.TimeoutExpired as exc:
+                    raise Problem(504, "git diff did not finish within 30 seconds") from exc
                 return Response(200, envelope(self.con, {"status": status, "diff": diff[:200_000]}))
             if suffix == ["merge"] and method == "POST":
                 _operator(identity)
@@ -282,6 +284,9 @@ class API:
                 revision = int(data.pop("expected_revision"))
             except (KeyError, TypeError, ValueError) as exc:
                 raise Problem(400, "expected_revision is required") from exc
+            unknown = set(data) - PROFILE_FIELDS
+            if unknown:
+                raise Problem(400, "unknown profile fields: " + ", ".join(sorted(unknown)))
             try:
                 row = profiles.update(self.con, parts[1], expected_revision=revision,
                                       actor=_actor(identity), **data)
@@ -384,8 +389,10 @@ class API:
             return FileResponse(200, file_path, metadata["media_type"], headers={"Content-Disposition": disposition})
         if parts == ["models"] and method == "GET":
             _need(identity, "read")
+            age = dsh.catalog_cache_age()
+            refresh = query.get("refresh") == "1" and (age is None or age >= CATALOG_REFRESH_FLOOR)
             try:
-                choices, checked_at = dsh.cached_catalog(str(paths.state_dir()), refresh=query.get("refresh") == "1")
+                choices, checked_at = dsh.cached_catalog(str(paths.state_dir()), refresh=refresh)
             except dsh.DshError as exc:
                 raise Problem(503, str(exc)) from exc
             models = [{"provider": provider, "model": model, "efforts": sorted(efforts)}

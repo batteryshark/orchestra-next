@@ -64,7 +64,15 @@ class DocumentTests(UiTransportCase):
         response, _ = self.request("GET", "/nope")
         self.assertEqual(response.status, 404)
 
+    def test_oversized_or_malformed_bodies_are_refused_early(self):
+        response, value = self.request("POST", "/api/auth/pair/redeem", headers={"Content-Length": str(transport.MAX_BODY + 1)})
+        self.assertEqual(response.status, 413)
+        response, value = self.request("POST", "/api/auth/pair/redeem", headers={"Content-Length": "abc"})
+        self.assertEqual(response.status, 400)
+        self.assertIn("Content-Length", value["error"]["message"])
+
     def test_security_headers_on_document_and_api(self):
+        self.assertIn("object-src 'none'", transport.CSP)
         for path in ("/", "/api/health"):
             response, _ = self.request(path=path, method="GET")
             self.assertEqual(response.getheader("Content-Security-Policy"), transport.CSP, path)
