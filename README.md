@@ -100,5 +100,6 @@ python run_tests.py
 The suite uses a deterministic fake ACP server and makes no provider or network calls. Paid-provider evaluation is intentionally separate; compare completion rate, wall time, cache reads/writes, compaction, attention, and restart recovery against V2 before moving Workbridge.
 
 See [DESIGN.md](DESIGN.md) for ownership boundaries,
-[docs/API.md](docs/API.md) for the public surface, and
+[docs/API.md](docs/API.md) for the public surface,
+[docs/CONSOLE.md](docs/CONSOLE.md) for the operator console maintainer notes, and
 [docs/UI_PROPOSAL.md](docs/UI_PROPOSAL.md) for the proposed operator interface.

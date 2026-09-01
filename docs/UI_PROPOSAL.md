@@ -1,6 +1,15 @@
 # Orchestra-next operator interface
 
-Status: proposed
+Status: implemented — see CONSOLE.md for the maintained description
+
+Deviations from this proposal:
+
+- (a) Rendering builds DOM nodes with `textContent`; there is no audited escaping function and no `innerHTML`.
+- (b) Three static files (`index.html`, `app.css`, `app.js`) instead of one packaged document, so the CSP carries no `unsafe-inline`.
+- (c) Run detail has five sections: Activity, Changes, Artifacts, Usage, Evidence. Goal folded into the header strip; Family folded into Evidence.
+- (d) Changes and Usage shipped in slice 1.
+- (e) The API prefix is `/api` with an unversioned envelope (`instance_id`, `board_revision`, `data`).
+- (f) A `pause` control was added next to tell, interrupt, reroute, resume, retry, continue, and stop.
 
 Audience: Fable and the Orchestra-next implementer
 
