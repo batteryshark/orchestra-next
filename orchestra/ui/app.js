@@ -170,6 +170,14 @@ function messageParts(payload) {
   return parts;
 }
 
+// A journal user message is the operator's prompt only when DSH marks its source as
+// "user"; plugin snapshots (runtime context) carry named sections instead.
+function promptSource(payload) {
+  const source = payload?.source;
+  if (!source || source.kind === "user") return { kind: "user" };
+  return { kind: "context", plugin: source.plugin || source.kind, sections: Array.isArray(source.sections) ? source.sections : [] };
+}
+
 function extractText(payload) {
   if (payload == null) return "";
   if (typeof payload === "string") return payload;
@@ -1263,7 +1271,7 @@ function threadEntryKind(entry) {
   if (type === "acp.tool_call_update") return "tool-update";
   if (type.startsWith("dsh.goal")) return "goal";
   if (type.includes("compact")) return "compaction";
-  if (type === "dsh.user/message") return "prompt";
+  if (type === "dsh.user/message") return promptSource(entry.item.payload).kind === "user" ? "prompt" : "context";
   if (type === "dsh.assistant/message") {
     const parts = messageParts(entry.item.payload);
     return parts.reasoning.length || parts.text.length ? "assistant" : "machine";
@@ -1346,6 +1354,15 @@ function buildThreadRow(entry, toolIndex) {
   }
   if (kind === "prompt") {
     return el("div", { class: "feed-item prompt" }, head("🧑 prompt"), el("div", { class: "item-body" }, boundedPre(extractText(entry.item.payload))));
+  }
+  if (kind === "context") {
+    const source = promptSource(entry.item.payload);
+    const names = source.sections.map((section) => section.name).filter(Boolean);
+    const body = source.sections.length
+      ? source.sections.map((section) => el("div", { class: "context-section" }, el("div", { class: "muted mono", text: section.name || "" }), boundedPre(section.text || "")))
+      : [boundedPre(extractText(entry.item.payload))];
+    return el("div", { class: "feed-item context" }, head(`📎 context snapshot · ${source.plugin}`),
+      el("details", null, el("summary", { text: names.length ? names.join(" · ") : "show" }), ...body));
   }
   if (kind === "tool") {
     const payload = entry.item.payload || {};

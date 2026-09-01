@@ -136,6 +136,14 @@ class UiLogicTests(unittest.TestCase):
         only_tools = self.evaluate("messageParts({message: {content: [{type: 'tool-call'}]}})")
         self.assertEqual(only_tools, {"reasoning": [], "text": []})
 
+    def test_prompt_source_separates_operator_prompts_from_plugin_snapshots(self):
+        user = self.evaluate("promptSource({content: [], source: {kind: 'user'}})")
+        self.assertEqual(user, {"kind": "user"})
+        legacy = self.evaluate("promptSource({content: []})")
+        self.assertEqual(legacy["kind"], "user")
+        plugin = self.evaluate("promptSource({source: {kind: 'plugin', plugin: '@deepseek-ai/dsh-system-prompt', form: 'snapshot', sections: [{name: 'sandbox:policy', text: 'x'}]}})")
+        self.assertEqual((plugin["kind"], plugin["plugin"], plugin["sections"][0]["name"]), ("context", "@deepseek-ai/dsh-system-prompt", "sandbox:policy"))
+
     def test_extract_text_handles_content_shapes(self):
         value = self.evaluate("""({
           plain: extractText("hello"),

@@ -310,6 +310,8 @@
   .feed-item .thinking { display: flex; gap: var(--sp-2); color: var(--muted); margin-bottom: var(--sp-2); }
   .feed-item .thinking > div { flex: 1; min-width: 0; }
   .feed-item.prompt .item-body { color: var(--muted); font-size: var(--fs-s); }
+  .feed-item.context summary { cursor: pointer; color: var(--muted); font-size: var(--fs-s); }
+  .feed-item.context .context-section { margin: var(--sp-2) 0 0 var(--sp-4); font-size: var(--fs-s); }
   .day-sep { text-align: center; color: var(--faint); font-size: var(--fs-xs); padding: var(--sp-3) 0; border-bottom: none; }
   .return-live { position: absolute; bottom: var(--sp-5); right: var(--sp-6); z-index: 2; box-shadow: 0 4px 14px rgb(0 0 0 / 0.2); }
   .direct-dialog { width: min(34em, 92vw); }
