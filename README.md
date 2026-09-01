@@ -66,6 +66,8 @@ deployment unless that approval exists.
 
 The daemon listens on `127.0.0.1:8766`; the API prefix is `/api`. The operator console is served at `/`. State lives at `~/.orchestra-next`. Override these with the non-secret bootstrap file or `ORCHESTRA_NEXT_HOME`/`ORCHESTRA_NEXT_URL`. Browsers pair with a code from `orchestra-next pair`; on a tailnet you can instead set `"trust_tailnet": true` in the bootstrap file and skip pairing entirely (see docs/API.md).
 
+The console is three static files under `orchestra/ui/` with no build step. It covers fleet status and dispatch, run activity with tell, interrupt, pause, resume, and stop, the attention inbox, Git changes, raw token usage, and run evidence. Keyboard: `/` filter, `j`/`k` move, `Enter` open, `t` direct a run, `1`–`5` run sections, `Esc` back.
+
 ## Run behavior
 
 A goal run must create a DSH goal before substantive work. DSH drives continuation rounds inside the same process and session. Orchestra-next reconciles the session JSONL by `(session_id, seq)`, including goal state, rounds, messages, tool lifecycle, compaction, and exact input/output/cache token facts.
