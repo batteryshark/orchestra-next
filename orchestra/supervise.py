@@ -41,16 +41,18 @@ def _resume_prompt(run) -> str:
 def _checkpoint(run_id: int, workdir_path: Path) -> dict:
     before = worktree.status(workdir_path)
     excluded = worktree.untracked_context_paths(workdir_path)
-    subprocess.run(["git", "-C", str(workdir_path), "add", "-A"], check=True, capture_output=True, text=True)
+    # The agent owns the tree and can point core.hooksPath at it; hooks must not run as the supervisor.
+    git = ["git", "-c", "core.hooksPath=/dev/null", "-C", str(workdir_path)]
+    subprocess.run([*git, "add", "-A"], check=True, capture_output=True, text=True)
     if excluded:
-        subprocess.run(["git", "-C", str(workdir_path), "reset", "-q", "HEAD", "--", *excluded], check=False, capture_output=True, text=True)
-    staged = subprocess.run(["git", "-C", str(workdir_path), "diff", "--cached", "--quiet"])
+        subprocess.run([*git, "reset", "-q", "HEAD", "--", *excluded], check=False, capture_output=True, text=True)
+    staged = subprocess.run([*git, "diff", "--cached", "--quiet"])
     if staged.returncode == 1:
-        result = subprocess.run(["git", "-C", str(workdir_path), "commit", "-m", f"orchestra-next: checkpoint run {run_id}"], capture_output=True, text=True)
+        result = subprocess.run([*git, "commit", "-m", f"orchestra-next: checkpoint run {run_id}"], capture_output=True, text=True)
         if result.returncode != 0:
             raise RuntimeError((result.stderr or result.stdout).strip()[:1000])
     end_ref = worktree.head(workdir_path)
-    stat = subprocess.run(["git", "-C", str(workdir_path), "diff", "--stat", f"{end_ref}^", end_ref], capture_output=True, text=True).stdout.strip()
+    stat = subprocess.run([*git, "diff", "--stat", f"{end_ref}^", end_ref], capture_output=True, text=True).stdout.strip()
     return {"before": before[:16_000], "end_ref": end_ref, "diff_stat": stat[:8_000]}
 
 
