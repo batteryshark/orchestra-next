@@ -119,6 +119,9 @@ class CookieAuthTests(UiTransportCase):
                                        headers={"Cookie": cookie, "Origin": f"http://127.0.0.1:{self.port}"})
         self.assertEqual(response.status, 201)
         self.assertIn("code", value["data"])
+        response, _ = self.request("POST", "/api/auth/pair", body={},
+                                   headers={"Cookie": cookie, "Origin": f"https://127.0.0.1:{self.port}"})
+        self.assertEqual(response.status, 201, "a TLS front presents an https origin for the same host")
 
     def test_bearer_mutations_skip_csrf(self):
         response, value = self.request("POST", "/api/auth/pair", body={},

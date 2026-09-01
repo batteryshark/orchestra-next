@@ -122,7 +122,9 @@ class Handler(BaseHTTPRequestHandler):
         peer_trusted = self._peer_trusted()
         if self.command != "GET":
             origin = self.headers.get("Origin", "")
-            same_origin = origin == "http://" + self.headers.get("Host", "")
+            host = self.headers.get("Host", "")
+            # A TLS front (tailscale serve) presents https while the daemon speaks http; the host must match exactly either way.
+            same_origin = bool(host) and origin in ("http://" + host, "https://" + host)
             if from_cookie and not same_origin:
                 return self._json(403, {"error": {"message": "cookie-authenticated mutations require a same-origin browser request"}})
             if peer_trusted and origin and not same_origin:

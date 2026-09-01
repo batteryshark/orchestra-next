@@ -50,7 +50,7 @@ Poll loop (`tick`):
 
 Run detail: on first open, `GET /api/runs/{id}/events?order=desc&limit=500`; `absorbHistory()` reverses the page, sets `eventsAfter` to the newest id, and `historyFloor` to the oldest. Later ticks page forward with `after=<eventsAfter>`. "Load earlier history" fetches `order=desc&limit=500&before=<historyFloor>`, prepends, and restores the scroll offset. `historyDone` is true when a page is short. Changes, Usage, and Artifacts load once per section visit and reload after each snapshot refresh; dependencies and children load once per run.
 
-Hash routes (`parseHash`): `#/` Fleet; `#/runs/{id}` Activity; `#/runs/{id}/{section}` with section in `activity | changes | artifacts | usage | evidence` (unknown falls back to Activity); `#/attention`; `#/config`. Anything else is Fleet. There is no `#/pair/{code}` route. Opening a different run resets `store.detail`, seeds the header from the fleet row when known, and polls at once.
+Hash routes (`parseHash`): `#/` Fleet; `#/runs/{id}` Activity; `#/runs/{id}/{section}` with section in `activity | changes | artifacts | usage | evidence` (unknown falls back to Activity); `#/attention`; `#/config`; `#/pair/{code}` (a scanned pairing link: while the browser is unpaired the code is copied into the pairing form, then the route continues to `#/config`). Anything else is Fleet. Opening a different run resets `store.detail`, seeds the header from the fleet row when known, and polls at once.
 
 ## 4. Rendering rules
 
@@ -100,7 +100,7 @@ A waiting run with kind attention, permission, or verification adds an "Answer â
 
 **Attention.** Open items grouped by run, each with kind chip, non-blocking chip, age, expiry countdown (1 s timer, red under 60 s), lease holder, objective, prompt, context key-values, and option buttons that fill the answer box. Alerts acknowledge with "acknowledged" when the box is empty. Answering an item with a live lease opens a danger confirm before overriding.
 
-**Config.** Profiles (table; New/Edit dialog with datalists from `/api/models`, manual entry when the catalog fails; Enable/Disable and Archive via revision-checked PATCH; a `409` keeps the operator's edits and reloads the untouched fields). Groups (table; New dialog; Rename and Set directory through the confirm input; Archive confirm). Devices and service tokens (revoke with confirm; new token shown once in `token-reveal` and cleared on close). Pairing, Storage, and Audit have headings but empty renderers. Diagnostics: identity, instance, board revision, poll health, and `/api/readiness` (schema, DSH, Claude sidecar, models cached).
+**Config.** Profiles (table; New/Edit dialog with datalists from `/api/models`, manual entry when the catalog fails; Enable/Disable and Archive via revision-checked PATCH; a `409` keeps the operator's edits and reloads the untouched fields). Groups (table; New dialog; Rename and Set directory through the confirm input; Archive confirm). Devices and service tokens (revoke with confirm; new token shown once in `token-reveal` and cleared on close). Pairing (`POST /api/auth/pair` â†’ code, expiry countdown, and a QR of `${origin}/#/pair/{code}` drawn from the pure `qrMatrix()` in the `qr` block). Storage (`/api/storage` report; "Plan prune" posts a dry-run plan whose exact items and totals render as a table; "Apply this plan" is a danger confirm restating the count and size, then shows what moved and the trash directory). Audit (controls and callbacks feeds loaded lazily with an `after` cursor, a client-side text filter, and "Load more"). Diagnostics: identity, instance, board revision, poll health, and `/api/readiness` (schema, DSH, Claude sidecar, models cached).
 
 **Pairing screen.** Shown whenever auth is `unpaired`. Code and device name; success sets auth `ok`, marks snapshots stale, and polls.
 
@@ -138,8 +138,8 @@ Run `python3 run_tests.py`. It runs one process per module; pass substrings to s
 
 ## 8. How to add a feature
 
-1. Pick the anchor block. `slice3-admin` is empty and reserved for Pairing, Storage, and Audit; `qr` is reserved for the pairing QR encoder. Add a new `// --- sliceN-name ---` pair only for a new feature, and add matching `<!-- sliceN-name dialogs -->` and `/* sliceN-name */` blocks.
-2. Put DOM and store code in the feature block: render functions, `Object.assign(ACTIONS, {...})`, `Object.assign(FORMS, {...})`, and any listeners on static elements. Fill a Config stub by replacing its empty `renderConfig*` function.
+1. Pick the anchor block. The existing blocks (`slice2-routing`, `slice2-evidence`, `slice2-config`, `slice3-admin`) each belong to one feature area; add a new `// --- sliceN-name ---` pair for a new feature, with matching `<!-- sliceN-name dialogs -->` and `/* sliceN-name */` blocks. Top-level names must be unique across the whole module: the conformance suite runs `node --check` on `app.js`, and a duplicate declaration fails it.
+2. Put DOM and store code in the feature block: render functions, `Object.assign(ACTIONS, {...})`, `Object.assign(FORMS, {...})`, and any listeners on static elements. A new Config area gets its own container in `index.html` and its own `renderConfig*` function called from `renderConfig()`.
 3. Put pure functions in a separate `// --- name-logic ---` block with no `document`, `store`, or `api` references. Node runs the block on its own.
 4. Add `tests/test_ui_<name>.py`: import `slice_section` and `run_node` from `tests.test_ui_js`, concatenate the needed blocks (`constants`, `fmt`, `logic`, and yours), and assert on JSON output. Skip when `node` is missing.
 5. Keep the conformance rules: build DOM with `el()`, no inline handlers, dialogs for confirmations, `act()` around every mutation for busy state and duplicate suppression, `formError()` to keep input on failure, `schedule(true)` after success.
@@ -148,8 +148,6 @@ A server change is needed when a view cannot be correct or efficient with the cu
 
 ## 9. Known gaps
 
-- Config Pairing, Storage, and Audit are heading-only stubs; `slice3-admin` and `qr` are empty. `/api/controls`, `/api/callbacks`, `/api/storage*`, and browser-side `POST /api/auth/pair` are unused.
 - Fleet filters run in the browser over the loaded window of 200 runs per page. The server `status`, `group`, and `profile` query parameters are unused; there is no strategy filter and no child count on rows.
-- The CSRF check compares `Origin` with `http://` + `Host` only. Behind a TLS proxy, every cookie or trusted-peer browser mutation returns 403.
 - No UI state is retained across reloads: filters and "Show machine events" reset. The console never uses `localStorage`.
 - Evidence shows the verifier argv but not its output or callback records; verifier output appears only on `verification.failed` rows in Activity.
