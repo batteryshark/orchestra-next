@@ -1255,7 +1255,7 @@ function renderFleet() {
   const visible = filterRuns(runs, store.filters);
   const state = document.getElementById("fleet-state");
   const filtering = runsQuery(store.filters) !== runsQuery({ status: new Set() }) || store.filters.text.trim() || store.filters.strategy;
-  if (store.boardRevision < 0) state.textContent = "Loading runs…";
+  if (store.boardRevision < 0 || (!runs.length && store.snapshotsStale)) state.textContent = "Loading runs…";
   else if (!runs.length && !filtering) state.textContent = "No runs yet. Dispatch the first one with New run.";
   else if (!visible.length) state.replaceChildren("No runs match the current filters. ", el("button", { type: "button", dataset: { action: "filter-clear" }, text: "Clear filters" }));
   state.hidden = Boolean(visible.length);
