@@ -1,14 +1,15 @@
-"""Small versioned JSON API for the standalone V3 kernel."""
+"""Small JSON API for the standalone Orchestra-next kernel."""
 from __future__ import annotations
 
 import json
+import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 
-from orchestra import artifacts, attention, auth, child_runs, db, dsh, groups, messaging, profiles, runs, storage, worktree
+from orchestra import artifacts, attention, auth, child_runs, claude, db, dsh, groups, messaging, paths, profiles, runs, storage, worktree
 from orchestra.contracts import ContractError, RunRequest
 
-PREFIX = "/api/v3"
+PREFIX = "/api"
 
 
 @dataclass
@@ -33,7 +34,7 @@ class Problem(RuntimeError):
 
 
 def envelope(con, data) -> dict:
-    return {"version": 3, "instance_id": db.instance_id(con), "board_revision": db.board_revision(con), "data": data}
+    return {"instance_id": db.instance_id(con), "board_revision": db.board_revision(con), "data": data}
 
 
 def _actor(identity) -> str:
@@ -49,7 +50,7 @@ def _need(identity, authority: str, target=None):
 
 def _operator(identity) -> None:
     _need(identity, "read")
-    if identity.kind != "device":
+    if identity.kind not in ("device", "network"):
         raise Problem(403, "an operator device is required")
 
 
@@ -79,7 +80,7 @@ class API:
 
     def handle(self, method: str, path: str, query: dict, body, identity) -> Response | FileResponse:
         if path == PREFIX + "/health" and method == "GET":
-            return Response(200, envelope(self.con, {"status": "ok", "schema": "v3"}))
+            return Response(200, envelope(self.con, {"status": "ok"}))
         if path == PREFIX + "/openapi.json" and method == "GET":
             return Response(200, openapi())
         if path == PREFIX + "/auth/bootstrap" and method == "POST":
@@ -91,6 +92,8 @@ class API:
         if path == PREFIX + "/auth/pair/redeem" and method == "POST":
             data = _body(body)
             device, token = auth.redeem_pairing(self.con, data.get("pairing_id", ""), data.get("code", ""), data.get("name", ""))
+            if data.get("cookie") is True:
+                return Response(201, envelope(self.con, {"device": device}), headers={"Set-Cookie": auth.cookie_header(token)})
             return Response(201, envelope(self.con, {"device": device, "token": token}))
         if not path.startswith(PREFIX + "/"):
             raise Problem(404, "not found")
@@ -99,8 +102,39 @@ class API:
         if parts == ["runs"]:
             if method == "GET":
                 _need(identity, "read")
-                after = int(query.get("after", 0) or 0)
-                rows = self.con.execute("SELECT * FROM runs WHERE id>? ORDER BY id LIMIT 200", (after,)).fetchall()
+                order = query.get("order", "asc")
+                if order not in ("asc", "desc"):
+                    raise Problem(400, "order must be asc or desc")
+                try:
+                    limit = max(1, min(int(query.get("limit", 200) or 200), 200))
+                    after = int(query.get("after", 0) or 0)
+                    before = int(query.get("before", 0) or 0)
+                except ValueError as exc:
+                    raise Problem(400, "after, before, and limit must be integers") from exc
+                where, params = [], []
+                if after:
+                    where.append("id>?"); params.append(after)
+                if before:
+                    where.append("id<?"); params.append(before)
+                statuses = [item for item in (query.get("status") or "").split(",") if item]
+                unknown = [item for item in statuses if item not in db.RUN_ACTIVE + db.RUN_TERMINAL]
+                if unknown:
+                    raise Problem(400, "unknown status: " + ", ".join(unknown))
+                if statuses:
+                    where.append("status IN (%s)" % ",".join("?" for _ in statuses)); params.extend(statuses)
+                if query.get("group"):
+                    target = groups.find(self.con, query["group"])
+                    if target is None:
+                        raise Problem(400, f"group {query['group']!r} does not exist")
+                    where.append("group_id=?"); params.append(target["group_id"])
+                if query.get("profile"):
+                    target = profiles.find(self.con, query["profile"])
+                    if target is None:
+                        raise Problem(400, f"profile {query['profile']!r} does not exist")
+                    where.append("profile_id=?"); params.append(target["profile_id"])
+                clause = (" WHERE " + " AND ".join(where)) if where else ""
+                direction = " DESC" if order == "desc" else ""
+                rows = self.con.execute(f"SELECT * FROM runs{clause} ORDER BY id{direction} LIMIT {limit}", params).fetchall()
                 return Response(200, envelope(self.con, [runs.payload(row) for row in rows]))
             if method == "POST":
                 _need(identity, "dispatch")
@@ -137,7 +171,7 @@ class API:
             if suffix == ["messages"] and method == "GET":
                 _need(identity, "read", target=run_id)
                 return Response(200, envelope(self.con, messaging.thread(self.con, run_id)))
-            if suffix in (["tell"], ["interrupt"], ["stop"] ) and method == "POST":
+            if suffix in (["tell"], ["interrupt"], ["pause"], ["stop"]) and method == "POST":
                 kind = suffix[0]
                 authority = "stop" if kind == "stop" else "resume"
                 _need(identity, authority, target=run_id)
@@ -271,7 +305,7 @@ class API:
             data = _body(body)
             return Response(201, envelope(self.con, attention.lease(self.con, parts[1], holder=_actor(identity), seconds=data.get("seconds", 60))))
         if len(parts) == 3 and parts[0] == "attention" and parts[2] == "answer" and method == "POST":
-            if identity and identity.kind == "device":
+            if identity and identity.kind in ("device", "network"):
                 _need(identity, "read")
                 human = True
             else:
@@ -287,9 +321,17 @@ class API:
             return Response(200, envelope(self.con, [dict(row) for row in self.con.execute("SELECT * FROM control_events WHERE id>? ORDER BY id LIMIT 500", (after,))]))
         if parts == ["events"] and method == "GET":
             _need(identity, "read")
-            after = int(query.get("after", 0) or 0)
+            order = query.get("order", "asc")
+            if order not in ("asc", "desc"):
+                raise Problem(400, "order must be asc or desc")
+            try:
+                after = int(query.get("after", 0) or 0)
+                limit = max(1, min(int(query.get("limit", 500) or 500), 500))
+            except ValueError as exc:
+                raise Problem(400, "after and limit must be integers") from exc
             values = []
-            for row in self.con.execute("SELECT * FROM events WHERE id>? ORDER BY id LIMIT 500", (after,)):
+            direction = " DESC" if order == "desc" else ""
+            for row in self.con.execute(f"SELECT * FROM events WHERE id>? ORDER BY id{direction} LIMIT {limit}", (after,)):
                 value = dict(row)
                 value["payload"] = json.loads(value.pop("payload_json"))
                 values.append(value)
@@ -324,8 +366,82 @@ class API:
             item = artifacts.stored_file(self.con, parts[1])
             if item is None:
                 raise Problem(404, "artifact does not exist")
-            path, metadata = item
-            return FileResponse(200, path, metadata["media_type"])
+            file_path, metadata = item
+            fallback = "".join(c if 32 < ord(c) < 127 and c != '"' else "_" for c in metadata["name"]) or "artifact"
+            disposition = f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{urllib.parse.quote(metadata['name'])}"
+            return FileResponse(200, file_path, metadata["media_type"], headers={"Content-Disposition": disposition})
+        if parts == ["models"] and method == "GET":
+            _need(identity, "read")
+            try:
+                choices, checked_at = dsh.cached_catalog(str(paths.state_dir()), refresh=query.get("refresh") == "1")
+            except dsh.DshError as exc:
+                raise Problem(503, str(exc)) from exc
+            models = [{"provider": provider, "model": model, "efforts": sorted(efforts)}
+                      for (provider, model), efforts in sorted(choices.items())]
+            return Response(200, envelope(self.con, {"models": models, "capabilities": {"native_web_search": dsh.web_search_capability()}, "checked_at": checked_at}))
+        if parts == ["readiness"] and method == "GET":
+            _need(identity, "read")
+            def probe(fn):
+                try:
+                    return {"ok": True, **fn()}
+                except Exception as exc:
+                    return {"ok": False, "error": str(exc)}
+            return Response(200, envelope(self.con, {
+                "schema": db.meta_get(self.con, "schema_version"),
+                "dsh": probe(dsh.check_profile),
+                "claude": probe(lambda: claude.check(require_auth=False)),
+                "models_cached": dsh.catalog_cache_age() is not None,
+            }))
+        if parts == ["auth", "me"] and method == "GET":
+            if identity is None:
+                return Response(200, envelope(self.con, {"authenticated": False}))
+            data = {"authenticated": True, "kind": identity.kind, "id": identity.subject_id,
+                    "authorities": sorted(identity.authorities)}
+            if identity.kind == "device":
+                row = self.con.execute("SELECT name,created_at,last_seen_at FROM devices WHERE device_id=?", (identity.subject_id,)).fetchone()
+                if row:
+                    data["device"] = dict(row)
+            if identity.kind == "run":
+                data["run_id"] = identity.run_id
+            return Response(200, envelope(self.con, data))
+        if parts == ["auth", "logout"] and method == "POST":
+            headers = {"Set-Cookie": auth.cookie_header("", max_age=0)}
+            if identity is not None and identity.kind == "device":
+                try:
+                    auth.revoke_device(self.con, identity.subject_id)
+                except auth.AuthError:
+                    pass
+                db.record_control(self.con, actor=_actor(identity), action="device.logout", outcome="ok", target_type="device", target_id=identity.subject_id)
+                self.con.commit()
+            return Response(200, envelope(self.con, {"logged_out": True}), headers=headers)
+        if parts == ["auth", "devices"] and method == "GET":
+            _operator(identity)
+            rows = self.con.execute("SELECT device_id,name,created_at,last_seen_at,revoked_at FROM devices ORDER BY created_at").fetchall()
+            return Response(200, envelope(self.con, [dict(row) for row in rows]))
+        if len(parts) == 4 and parts[:2] == ["auth", "devices"] and parts[3] == "revoke" and method == "POST":
+            _operator(identity)
+            try:
+                changed = auth.revoke_device(self.con, parts[2])
+            except auth.AuthError as exc:
+                raise Problem(409, str(exc)) from exc
+            if not changed:
+                raise Problem(404, "device does not exist or is already revoked")
+            db.record_control(self.con, actor=_actor(identity), action="device.revoke", outcome="ok", target_type="device", target_id=parts[2]); self.con.commit()
+            return Response(200, envelope(self.con, {"revoked": True}))
+        if parts == ["auth", "service-tokens"] and method == "GET":
+            _operator(identity)
+            values = []
+            for row in self.con.execute("SELECT token_id,name,authorities_json,created_at,last_seen_at,revoked_at FROM service_tokens ORDER BY created_at"):
+                value = dict(row)
+                value["authorities"] = json.loads(value.pop("authorities_json") or "[]")
+                values.append(value)
+            return Response(200, envelope(self.con, values))
+        if len(parts) == 4 and parts[:2] == ["auth", "service-tokens"] and parts[3] == "revoke" and method == "POST":
+            _operator(identity)
+            if not auth.revoke_service_token(self.con, parts[2]):
+                raise Problem(404, "service token does not exist or is already revoked")
+            db.record_control(self.con, actor=_actor(identity), action="service-token.revoke", outcome="ok", target_type="service", target_id=parts[2]); self.con.commit()
+            return Response(200, envelope(self.con, {"revoked": True}))
         if parts == ["auth", "pair"] and method == "POST":
             _operator(identity)
             return Response(201, envelope(self.con, auth.create_pairing(self.con, created_by_device_id=identity.subject_id if identity.kind == "device" else None)))
@@ -338,4 +454,4 @@ class API:
 
 
 def openapi() -> dict:
-    return {"openapi": "3.1.0", "info": {"title": "Orchestra-next API", "version": "3.0.0a1"}, "servers": [{"url": "http://127.0.0.1:8766/api/v3"}], "paths": {"/runs": {}, "/profiles": {}, "/groups": {}, "/attention": {}, "/storage": {}}}
+    return {"openapi": "3.1.0", "info": {"title": "Orchestra-next API", "version": "1"}, "servers": [{"url": "http://127.0.0.1:8766/api"}], "paths": {"/runs": {}, "/profiles": {}, "/groups": {}, "/attention": {}, "/storage": {}}}

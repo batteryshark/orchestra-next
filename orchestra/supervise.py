@@ -9,7 +9,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from orchestra import acp, attention, auth, callbacks, config, db, dsh, journal, messaging, paths, runs, worktree
+from orchestra import acp, attention, auth, callbacks, claude, config, db, dsh, journal, messaging, paths, runs, worktree
 from orchestra.contracts import PERMISSION_WAIT_SECONDS, VERIFICATION_REPAIRS
 
 POLL_SECONDS = 0.25
@@ -186,6 +186,7 @@ def _finish(con, run_id: int, status: str, workdir_path: Path, *, summary=None, 
 def supervise(run_id: int) -> int:
     con = db.connect()
     peer = None
+    sidecar = None
     try:
         with con:
             changed = con.execute("UPDATE runs SET status='starting',waiting_kind=NULL,waiting_detail=NULL,started_at=COALESCE(started_at,?),updated_at=?,revision=revision+1 WHERE id=? AND status='queued'", (db.now(), db.now(), run_id))
@@ -198,7 +199,9 @@ def supervise(run_id: int) -> int:
                     error="Ralph aggregate round budget was already exhausted")
             return 1
         token = auth.mint_run(con, run_id)
-        argv, env = dsh.launch(dict(run), token)
+        if claude.required(run["route_provider"]):
+            sidecar = claude.start(run_id, workdir_path)
+        argv, env = dsh.launch(dict(run), token, sidecar.provider_env if sidecar else None)
         updates = _Updates(run_id)
         if run["strategy"] == "ralph":
             updates.begin_ralph(int(run["rounds_started"]))
@@ -251,11 +254,35 @@ def supervise(run_id: int) -> int:
                     peer.cancel(session_id)
                     _finish(con, run_id, "stopped", workdir_path, summary=message["body"])
                     return 0
+                if kind == "pause":
+                    peer.cancel(session_id)
+                    _checkpoint(run_id, workdir_path)
+                    peer.close()
+                    detail = f"paused: {message['body']}" if message["body"] else "paused by operator"
+                    with con:
+                        con.execute("UPDATE runs SET status='waiting',waiting_kind=NULL,waiting_detail=?,dsh_pid=NULL,updated_at=?,revision=revision+1 WHERE id=?",
+                                    (detail, db.now(), run_id))
+                        db.append_event(con, run_id, "run.paused", {"reason": message["body"] or None, "by": message["sender"]})
+                    return 0
                 if kind in ("interrupt", "reroute"):
                     peer.cancel(session_id)
                 body = message["body"]
                 if kind == "reroute":
                     route = json.loads(body)
+                    if claude.required(route["provider"]) and sidecar is None:
+                        sidecar = claude.start(run_id, workdir_path)
+                        peer.close()
+                        argv, env = dsh.launch(dict(current), token, sidecar.provider_env)
+                        peer = acp.Peer(argv, cwd=workdir_path, env=env,
+                                        log_path=paths.run_dir(run_id) / "acp.jsonl",
+                                        on_request=lambda method, params: _permission(run_id, method, params),
+                                        on_notification=updates)
+                        peer.start()
+                        peer.initialize()
+                        peer.resume_session(session_id, str(workdir_path))
+                        with con:
+                            con.execute("UPDATE runs SET dsh_pid=?,updated_at=? WHERE id=?",
+                                        (peer.pid, db.now(), run_id))
                     peer.configure(session_id, route["provider"], route["model"], route.get("effort"))
                     with con:
                         con.execute("UPDATE runs SET route_provider=?,route_model=?,route_effort=?,cache_epoch=cache_epoch+1,updated_at=?,revision=revision+1 WHERE id=?", (route["provider"], route["model"], route.get("effort"), db.now(), run_id))
@@ -338,7 +365,7 @@ def supervise(run_id: int) -> int:
                 else:
                     updates.begin_ralph(int(current["rounds_started"]))
                     peer.close()
-                    argv, env = dsh.launch(dict(current), token)
+                    argv, env = dsh.launch(dict(current), token, sidecar.provider_env if sidecar else None)
                     peer = acp.Peer(argv, cwd=workdir_path, env=env,
                                     log_path=paths.run_dir(run_id) / "acp.jsonl",
                                     on_request=lambda method, params: _permission(run_id, method, params),
@@ -378,6 +405,8 @@ def supervise(run_id: int) -> int:
                 peer.close()
         finally:
             try:
+                if sidecar:
+                    sidecar.close()
                 with con:
                     con.execute("UPDATE runs SET dsh_pid=NULL,updated_at=? WHERE id=?",
                                 (db.now(), run_id))

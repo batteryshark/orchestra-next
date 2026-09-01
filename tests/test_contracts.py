@@ -68,7 +68,10 @@ class ContractTests(StateCase):
         self.install_profile()
         os.environ["ORCHESTRA_NEXT_TOKEN"] = "broader-operator-secret"
         run = {"id": 7, "strategy": "goal", "permission_mode": "workspace-write"}
-        argv, env = dsh.launch(run, "or_secret")
+        argv, env = dsh.launch(run, "or_secret", {
+            "ORCHESTRA_NEXT_CLAUDE_PROXY_URL": "http://127.0.0.1:43210/v1",
+            "ORCHESTRA_NEXT_CLAUDE_PROXY_TOKEN": "short-lived-proxy-token",
+        })
         self.assertNotIn("or_secret", env.values())
         self.assertNotIn("broader-operator-secret", env.values())
         self.assertNotIn("ORCHESTRA_NEXT_TOKEN", env)
@@ -79,6 +82,11 @@ class ContractTests(StateCase):
         self.assertEqual(client.load_token("http://fixture"), "or_secret")
         self.assertEqual(argv[1:3], ["--profile", "orchestra-next"])
         self.assertEqual(argv[3], "--patch")
+        self.assertEqual(env["ORCHESTRA_NEXT_CLAUDE_PROXY_URL"], "http://127.0.0.1:43210/v1")
+        self.assertEqual(env["ORCHESTRA_NEXT_CLAUDE_PROXY_TOKEN"], "short-lived-proxy-token")
+        profile_text = (dsh.profile_dir() / "cordis.patch.yml").read_text()
+        self.assertIn("claude-subscription", profile_text)
+        self.assertIn("x-opencode-claude-session", profile_text)
         ralph = {"id": 8, "strategy": "ralph", "permission_mode": "workspace-write",
                  "max_rounds": 8, "rounds_started": 3}
         ralph_argv, ralph_env = dsh.launch(ralph, "another-secret")

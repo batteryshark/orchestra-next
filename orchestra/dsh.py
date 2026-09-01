@@ -8,6 +8,9 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from orchestra import paths
@@ -119,7 +122,7 @@ def write_auth_file(run_id: int, token: str) -> Path:
     return target
 
 
-def launch(run: dict, token: str) -> tuple[list[str], dict[str, str]]:
+def launch(run: dict, token: str, provider_env: dict[str, str] | None = None) -> tuple[list[str], dict[str, str]]:
     """Return the only DSH argv/env. The bearer exists only in a 0600 file."""
     require_version()
     check_profile(require_binary=False)
@@ -135,6 +138,7 @@ def launch(run: dict, token: str) -> tuple[list[str], dict[str, str]]:
         "DSH_TELEMETRY_DISABLED": "1",
         "DSH_PERMISSION_MODE": run["permission_mode"],
     })
+    env.update(provider_env or {})
     if run["strategy"] == "ralph":
         remaining = max(1, int(run["max_rounds"]) - int(run.get("rounds_started") or 0))
         env["ORCHESTRA_NEXT_RALPH_ROUNDS"] = str(remaining)
@@ -157,6 +161,9 @@ def catalog(cwd: str) -> dict[tuple[str, str], set[str]]:
         env = dict(os.environ)
         env.update({
             "ORCHESTRA_NEXT_DSH_SESSION_ROOT": root,
+            "ORCHESTRA_NEXT_CLAUDE_PROXY_URL": "http://127.0.0.1:1/v1",
+            "ORCHESTRA_NEXT_CLAUDE_PROXY_TOKEN": "catalog-only",
+            "ORCHESTRA_NEXT_RUN_ID": "catalog",
             "DSH_TELEMETRY_DISABLED": "1",
             "DSH_PERMISSION_MODE": "read-only",
         })
@@ -197,3 +204,29 @@ def catalog(cwd: str) -> dict[tuple[str, str], set[str]]:
             return result
         finally:
             peer.close()
+
+
+_CATALOG_LOCK = threading.Lock()
+_CATALOG: tuple[float, str, dict] | None = None  # (monotonic, checked_at_iso, result)
+CATALOG_TTL = 300.0
+
+
+def cached_catalog(cwd: str, *, refresh: bool = False) -> tuple[dict, str]:
+    """Serve the advertised route catalog from a short-lived cache.
+
+    A catalog probe spawns a DSH process, so mutation validators keep calling
+    ``catalog`` directly; this cache exists for read endpoints and preflight.
+    """
+    # ponytail: one global entry ignores cwd; key by cwd if per-repo catalogs ever exist
+    global _CATALOG
+    with _CATALOG_LOCK:
+        if not refresh and _CATALOG is not None and time.monotonic() - _CATALOG[0] < CATALOG_TTL:
+            return _CATALOG[2], _CATALOG[1]
+        result = catalog(cwd)
+        _CATALOG = (time.monotonic(), datetime.now(timezone.utc).isoformat(), result)
+        return _CATALOG[2], _CATALOG[1]
+
+
+def catalog_cache_age() -> float | None:
+    with _CATALOG_LOCK:
+        return None if _CATALOG is None else time.monotonic() - _CATALOG[0]

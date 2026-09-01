@@ -87,12 +87,15 @@ def payload(row, *, detail=False) -> dict:
         "title", "objective", "strategy", "permission_mode", "max_rounds",
         "active_seconds_limit", "active_seconds", "status", "waiting_kind",
         "waiting_detail", "cwd", "workdir", "branch", "start_ref", "end_ref",
-        "dsh_session_id", "resume_count", "goal_id", "goal_state", "rounds_started",
+        "dsh_session_id", "resume_count", "goal_id", "goal_state", "goal_corrected",
+        "verification_repairs", "rounds_started",
         "route_provider", "route_model", "route_effort", "cache_epoch",
         "tokens_input", "tokens_output", "tokens_cache_read", "tokens_cache_write",
         "tokens_total", "summary", "error", "requested_by", "created_at",
         "started_at", "updated_at", "finished_at", "revision")}
     value["verify"] = json.loads(row["verify_json"]) if row["verify_json"] else None
+    value["paused"] = bool(row["status"] == "waiting" and row["waiting_kind"] is None
+                           and (row["waiting_detail"] or "").startswith("paused"))
     if detail:
         value["profile_snapshot"] = json.loads(row["profile_snapshot"])
         value["request_snapshot"] = json.loads(row["request_snapshot"])

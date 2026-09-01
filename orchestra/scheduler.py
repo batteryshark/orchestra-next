@@ -31,6 +31,7 @@ def admit(con, *, limit=DEFAULT_CONCURRENCY) -> dict:
         if state == "impossible":
             with con:
                 con.execute("UPDATE runs SET status='skipped',error='success dependency did not complete',finished_at=?,updated_at=? WHERE id=?", (db.now(), db.now(), run["id"]))
+                db.record_control(con, actor="orchestra", action="run.skip", outcome="skipped", target_type="run", target_id=run["id"])
             skipped.append(int(run["id"]))
             continue
         if state != "ready" or active >= limit:

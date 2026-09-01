@@ -36,6 +36,25 @@ class ExecutionTests(StateCase):
         self.assertFalse(paths.run_auth_path(run["id"]).exists())
         self.assertEqual(self.con.execute("SELECT COUNT(*) FROM usage_events WHERE run_id=?", (run["id"],)).fetchone()[0], 1)
 
+    def test_claude_route_owns_one_sidecar_for_the_run_lifecycle(self):
+        self.create_profile(name="Claude", slug="claude", provider="claude-subscription",
+                            model="haiku", effort=None,
+                            catalog={("claude-subscription", "haiku"): set()})
+        run = runs.submit(self.con, RunRequest.from_mapping({
+            "request_id": "claude", "profile": "claude", "objective": "finish",
+            "cwd": str(self.repo),
+        }))[0]
+        sidecar = mock.Mock()
+        sidecar.provider_env = {
+            "ORCHESTRA_NEXT_CLAUDE_PROXY_URL": "http://127.0.0.1:45678/v1",
+            "ORCHESTRA_NEXT_CLAUDE_PROXY_TOKEN": "fixture-token",
+        }
+        with mock.patch.object(supervise.claude, "start", return_value=sidecar) as start:
+            self.assertEqual(supervise.supervise(run["id"]), 0)
+        start.assert_called_once_with(run["id"], mock.ANY)
+        sidecar.close.assert_called_once_with()
+        self.assertEqual(runs.find(self.con, run["id"])["status"], "completed")
+
     def test_crash_resumes_same_run_and_session_once(self):
         os.environ["FAKE_DSH_MODE"] = "crash-once"
         run = self.submit("resume")
@@ -72,6 +91,25 @@ class ExecutionTests(StateCase):
         self.assertEqual(done["resume_count"], 0)
         self.assertGreater(pid, 0)
         self.assertEqual(self.con.execute("SELECT outcome FROM control_events WHERE action='permission.answer'").fetchone()[0], "allowed")
+
+    def test_pause_parks_at_boundary_and_resume_completes_same_session(self):
+        run = self.submit("pause")
+        messaging.queue(self.con, run["id"], kind="pause", body="operator break", sender="device:test")
+        self.assertEqual(supervise.supervise(run["id"]), 0)
+        paused = runs.find(self.con, run["id"])
+        self.assertEqual((paused["status"], paused["waiting_kind"], paused["dsh_pid"]), ("waiting", None, None))
+        self.assertTrue(paused["waiting_detail"].startswith("paused"))
+        session_id = paused["dsh_session_id"]
+        self.assertTrue(session_id)
+        self.assertEqual(self.con.execute(
+            "SELECT COUNT(*) FROM events WHERE run_id=? AND type='run.paused'",
+            (run["id"],)).fetchone()[0], 1)
+        with self.con:
+            self.con.execute("UPDATE runs SET status='queued',waiting_detail=NULL WHERE id=?", (run["id"],))
+        self.assertEqual(supervise.supervise(run["id"]), 0)
+        done = runs.find(self.con, run["id"])
+        self.assertEqual(done["status"], "completed")
+        self.assertEqual(done["dsh_session_id"], session_id)
 
     def test_permission_timeout_rejects_and_releases_process(self):
         os.environ["FAKE_DSH_MODE"] = "permission"
@@ -143,10 +181,19 @@ class ExecutionTests(StateCase):
 
     def test_reroute_records_cache_epoch(self):
         run = self.submit("route")
-        messaging.queue(self.con, run["id"], kind="reroute", body=json.dumps({"provider": "fake", "model": "other", "effort": "high", "body": "continue"}), sender="device:test")
-        supervise.supervise(run["id"])
+        messaging.queue(self.con, run["id"], kind="reroute", body=json.dumps({"provider": "claude-subscription", "model": "haiku", "effort": None, "body": "continue"}), sender="device:test")
+        sidecar = mock.Mock()
+        sidecar.provider_env = {
+            "ORCHESTRA_NEXT_CLAUDE_PROXY_URL": "http://127.0.0.1:45679/v1",
+            "ORCHESTRA_NEXT_CLAUDE_PROXY_TOKEN": "fixture-token",
+        }
+        with mock.patch.object(supervise.claude, "start", return_value=sidecar) as start:
+            supervise.supervise(run["id"])
         done = runs.find(self.con, run["id"])
-        self.assertEqual((done["route_model"], done["route_effort"], done["cache_epoch"]), ("other", "high", 1))
+        self.assertEqual((done["route_provider"], done["route_model"], done["cache_epoch"]),
+                         ("claude-subscription", "haiku", 1))
+        start.assert_called_once()
+        sidecar.close.assert_called_once_with()
 
 
 if __name__ == "__main__":

@@ -7,9 +7,9 @@ import os
 import sys
 import uuid
 
-from orchestra import auth, client, config, daemon, db, dsh, paths, supervise
+from orchestra import auth, claude, client, config, daemon, db, dsh, paths, supervise
 
-API = "/api/v3"
+API = "/api"
 
 
 def _print(value):
@@ -54,6 +54,18 @@ def cmd_dsh_check(args):
         catalog = dsh.catalog(os.getcwd())
         result["models"] = [{"provider": provider, "model": model, "efforts": sorted(efforts)} for (provider, model), efforts in catalog.items()]
     _print(result)
+
+
+def cmd_claude_setup(args):
+    path, changed = claude.setup()
+    result = {"path": str(path), "changed": changed}
+    if not args.no_check:
+        result.update(claude.check())
+    _print(result)
+
+
+def cmd_claude_check(args):
+    _print(claude.check())
 
 
 def cmd_daemon(args):
@@ -150,6 +162,9 @@ def build_parser():
     dsh_parser = sub.add_parser("dsh"); dsh_sub = dsh_parser.add_subparsers(dest="dsh_command", required=True)
     setup = dsh_sub.add_parser("setup"); setup.add_argument("--no-check", action="store_true"); setup.set_defaults(func=cmd_dsh_setup)
     check = dsh_sub.add_parser("check"); check.add_argument("--capabilities", action="store_true"); check.set_defaults(func=cmd_dsh_check)
+    claude_parser = sub.add_parser("claude"); claude_sub = claude_parser.add_subparsers(dest="claude_command", required=True)
+    claude_setup = claude_sub.add_parser("setup"); claude_setup.add_argument("--no-check", action="store_true"); claude_setup.set_defaults(func=cmd_claude_setup)
+    claude_check = claude_sub.add_parser("check"); claude_check.set_defaults(func=cmd_claude_check)
     serve = sub.add_parser("daemon"); serve.add_argument("--interval", type=float, default=1); serve.add_argument("--once", action="store_true"); serve.add_argument("--no-preflight", action="store_true", help=argparse.SUPPRESS); serve.set_defaults(func=cmd_daemon)
     internal = sub.add_parser("supervise", help="internal per-run supervisor"); internal.add_argument("run_id", type=int); internal.set_defaults(func=cmd_supervise)
     run = sub.add_parser("run"); run.add_argument("profile"); run.add_argument("objective"); run.add_argument("--request-id"); run.add_argument("--group", default="general"); run.add_argument("--strategy", choices=("goal", "ralph"), default="goal"); run.add_argument("--permission-mode", choices=("read-only", "workspace-write", "danger-full-access"), default="workspace-write"); run.add_argument("--title"); run.add_argument("--cwd"); run.add_argument("--ref"); run.add_argument("--max-rounds", type=int); run.add_argument("--active-seconds", type=int); run.add_argument("--verify", nargs="+"); run.add_argument("--verify-timeout", type=int, default=600); run.add_argument("--max-children", type=int); run.add_argument("--max-child-tier", type=int); run.set_defaults(func=cmd_run)
@@ -185,6 +200,6 @@ def main(argv=None):
     try:
         result = build_parser().parse_args(argv)
         return result.func(result) or 0
-    except (client.ClientError, dsh.DshError, ValueError) as exc:
+    except (claude.ClaudeError, client.ClientError, dsh.DshError, ValueError) as exc:
         print(f"orchestra-next: {exc}", file=sys.stderr)
         return 1

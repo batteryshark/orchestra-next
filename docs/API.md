@@ -1,47 +1,50 @@
-# Orchestra-next API v3
+# Orchestra-next API
 
-The service binds to `127.0.0.1:8766` by default. All resources use `/api/v3`; JSON responses include the API version, instance id, and board revision.
+The service binds to `127.0.0.1:8766` by default. All resources use `/api`; JSON responses include the API version, instance id, and board revision.
 
 ## Core resources
 
 ```text
-GET|POST  /api/v3/runs
-GET       /api/v3/runs/{id}
-GET       /api/v3/runs/{id}/events
-GET       /api/v3/runs/{id}/usage
-GET       /api/v3/runs/{id}/dependencies
-GET       /api/v3/runs/{id}/messages
-GET|POST  /api/v3/runs/{id}/children
-GET|POST  /api/v3/runs/{id}/artifacts
-GET       /api/v3/runs/{id}/changes
-POST      /api/v3/runs/{id}/merge
+GET|POST  /api/runs
+GET       /api/runs/{id}
+GET       /api/runs/{id}/events
+GET       /api/runs/{id}/usage
+GET       /api/runs/{id}/dependencies
+GET       /api/runs/{id}/messages
+GET|POST  /api/runs/{id}/children
+GET|POST  /api/runs/{id}/artifacts
+GET       /api/runs/{id}/changes
+POST      /api/runs/{id}/merge
 
-POST      /api/v3/runs/{id}/tell
-POST      /api/v3/runs/{id}/interrupt
-POST      /api/v3/runs/{id}/reroute
-POST      /api/v3/runs/{id}/resume
-POST      /api/v3/runs/{id}/retry
-POST      /api/v3/runs/{id}/continue
-POST      /api/v3/runs/{id}/stop
+POST      /api/runs/{id}/tell
+POST      /api/runs/{id}/interrupt
+POST      /api/runs/{id}/pause
+POST      /api/runs/{id}/reroute
+POST      /api/runs/{id}/resume
+POST      /api/runs/{id}/retry
+POST      /api/runs/{id}/continue
+POST      /api/runs/{id}/stop
 
-GET|POST  /api/v3/profiles
-PATCH     /api/v3/profiles/{id-or-slug}
-GET|POST  /api/v3/groups
-PATCH     /api/v3/groups/{id-or-slug}
-GET       /api/v3/attention
-POST      /api/v3/attention/{id}/lease
-POST      /api/v3/attention/{id}/answer
-GET       /api/v3/controls
-GET       /api/v3/callbacks
-GET       /api/v3/events
-GET       /api/v3/usage
-GET       /api/v3/storage
-POST      /api/v3/storage/plans
-GET       /api/v3/storage/plans/{id}
-POST      /api/v3/storage/plans/{id}/apply
+GET|POST  /api/profiles
+PATCH     /api/profiles/{id-or-slug}
+GET|POST  /api/groups
+PATCH     /api/groups/{id-or-slug}
+GET       /api/attention
+POST      /api/attention/{id}/lease
+POST      /api/attention/{id}/answer
+GET       /api/controls
+GET       /api/callbacks
+GET       /api/events
+GET       /api/usage
+GET       /api/storage
+POST      /api/storage/plans
+GET       /api/storage/plans/{id}
+POST      /api/storage/plans/{id}/apply
 ```
 
 List/feed endpoints accept an `after` cursor where applicable. The usage feed contains raw token facts only.
+
+`pause` parks the run at the next safe boundary: the current step is cancelled, the worktree is checkpointed, the DSH process stops, and capacity is released. The run reports `status: waiting` with a null `waiting_kind`, a `waiting_detail` beginning with `paused`, and `paused: true` in its payload. `resume` continues the same session.
 
 ## Run request
 
@@ -74,11 +77,22 @@ Bearer types are operator devices, scoped services, and active run workers. Serv
 Bootstrap and pairing endpoints:
 
 ```text
-POST /api/v3/auth/bootstrap
-POST /api/v3/auth/pair
-POST /api/v3/auth/pair/redeem
-POST /api/v3/auth/service-tokens
+POST /api/auth/bootstrap
+POST /api/auth/pair
+POST /api/auth/pair/redeem
+POST /api/auth/service-tokens
 ```
 
 Automated attention responders must lease an item before answering it. Operator devices may override a live lease.
 Profile/group mutation, Git merge, storage pruning, pairing, and service-token issuance require an operator device; scoped services cannot turn a narrow bearer into broader authority.
+
+### Trusted networks
+
+The bootstrap file may declare networks whose peers are operators without a token:
+
+```json
+{"bind": "100.101.102.103", "trust_tailnet": true, "trust_loopback": false,
+ "trusted_cidrs": [], "allowed_hosts": ["machine.tail1234.ts.net"]}
+```
+
+`trust_tailnet` trusts the Tailscale address ranges (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`). `trust_loopback` trusts local processes, which fits a `tailscale serve` proxy. `trusted_cidrs` adds explicit ranges. All default to off; pairing then remains the only browser path. A trusted peer appears as identity kind `network` with full operator authority, so tailnet ACLs are the access control. Requests from trusted peers still pass the Host allowlist (loopback, the bind address, `*.ts.net`, `allowed_hosts`, and trusted-range IP literals), and a browser mutation from a trusted peer must carry a same-origin `Origin` header; clients that send no `Origin`, such as curl, pass.

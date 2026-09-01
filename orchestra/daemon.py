@@ -28,6 +28,7 @@ def recover(con) -> list[int]:
         with con:
             if run["strategy"] == "goal" and run["dsh_session_id"] and run["resume_count"] < 1:
                 con.execute("UPDATE runs SET status='queued',resume_count=resume_count+1,dsh_pid=NULL,error='resident process disappeared',updated_at=? WHERE id=?", (db.now(), run["id"]))
+                db.record_control(con, actor="orchestra", action="run.recover", outcome="queued", target_type="run", target_id=run["id"])
                 recovered.append(int(run["id"]))
             else:
                 attention.open_request(con, run["id"], kind="alert", prompt="Resident DSH process disappeared and cannot be replayed safely")
@@ -54,7 +55,7 @@ def tick(con=None, *, launcher=supervise.spawn_supervisor) -> dict:
 def run(interval=DEFAULT_INTERVAL, *, once=False, preflight=True) -> int:
     if preflight:
         dsh.check_profile()
-        dsh.catalog(os.getcwd())
+        dsh.cached_catalog(os.getcwd(), refresh=True)
     if once:
         tick()
         return 0

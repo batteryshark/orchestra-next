@@ -13,6 +13,8 @@ This is an experimental fork. It does not read `~/.orchestra`, does not expose t
 - Python 3.11 or newer
 - DSH exactly `0.1.2-alpha.3`
 - Git
+- Node/npm and the official authenticated `claude` CLI only for the optional
+  `claude-subscription` route
 
 There are no Python runtime dependencies.
 
@@ -23,9 +25,21 @@ pip install -e .
 orchestra-next init
 orchestra-next dsh setup
 orchestra-next dsh check --capabilities
+
+# Optional private Claude subscription route
+orchestra-next claude setup
+orchestra-next claude check
 ```
 
 `dsh setup` installs the repository's `orchestra-next` profile under the existing DSH home. It does not change DSH credentials, provider settings, or endpoints. `dsh check` reports native DeepSeek search as unavailable when it cannot detect `DEEPSEEK_API_KEY`; it never displays the value. The profile uses uncompressed per-run JSONL, durable checkpoints, no outbound telemetry, native DSH web search/fetch, goals, compaction, jobs, skills, todo, and the normal shell/filesystem tools. Normal subagents, workflows, Ralph, plan mode, and native user elicitation are disabled. An explicit Ralph run loads the small `ralph.patch.yml` overlay.
+
+`claude setup` reproducibly installs the lockfile-pinned local sidecar
+(`@openchamber/opencode-claude` 0.14.0 and Bun 1.4.0) beneath Orchestra-next
+state. It does not read, copy, or
+change Claude credentials. `claude check` asks the official CLI for login status
+without returning account data. A Claude run gets its own authenticated
+loopback listener on an OS-assigned port, persistent session binding, and
+sidecar process; all are released with the run supervisor.
 
 Configure a route from DSH's live ACP catalog:
 
@@ -39,9 +53,18 @@ orchestra-next profile-create "DeepSeek worker" deepseek-official deepseek-v4-fl
 orchestra-next run deepseek "Implement and verify the requested change" \
   --cwd /path/to/repository \
   --verify python -m unittest
+
+# The optional sidecar looks like any other DSH route.
+orchestra-next profile-create "Claude worker" claude-subscription sonnet \
+  --slug claude --tier 2
 ```
 
-The daemon listens on `127.0.0.1:8766`; the API prefix is `/api/v3`. State lives at `~/.orchestra-next`. Override these with the non-secret bootstrap file or `ORCHESTRA_NEXT_HOME`/`ORCHESTRA_NEXT_URL`.
+The subscription sidecar is for private evaluation. Anthropic's current Agent
+SDK documentation requires prior approval before a third-party product offers
+claude.ai login or subscription rate limits; use an API-key route for public
+deployment unless that approval exists.
+
+The daemon listens on `127.0.0.1:8766`; the API prefix is `/api`. The operator console is served at `/`. State lives at `~/.orchestra-next`. Override these with the non-secret bootstrap file or `ORCHESTRA_NEXT_HOME`/`ORCHESTRA_NEXT_URL`. Browsers pair with a code from `orchestra-next pair`; on a tailnet you can instead set `"trust_tailnet": true` in the bootstrap file and skip pairing entirely (see docs/API.md).
 
 ## Run behavior
 
@@ -61,6 +84,11 @@ orchestra-next artifact reports/result.json
 
 Worker authentication is stored in a run-owned `0600` file. The bearer token is never placed directly in DSH's subprocess environment.
 
+Claude sidecar HTTP authentication uses a separate short-lived bearer. The
+sidecar reads it from another run-owned `0600` file; DSH receives only that
+ephemeral provider credential. A stable run header prevents identical prompts
+in different runs from sharing Claude sessions.
+
 ## Tests
 
 ```sh
@@ -69,4 +97,6 @@ python run_tests.py
 
 The suite uses a deterministic fake ACP server and makes no provider or network calls. Paid-provider evaluation is intentionally separate; compare completion rate, wall time, cache reads/writes, compaction, attention, and restart recovery against V2 before moving Workbridge.
 
-See [DESIGN.md](DESIGN.md) for ownership boundaries and [docs/API.md](docs/API.md) for the public surface.
+See [DESIGN.md](DESIGN.md) for ownership boundaries,
+[docs/API.md](docs/API.md) for the public surface, and
+[docs/UI_PROPOSAL.md](docs/UI_PROPOSAL.md) for the proposed operator interface.

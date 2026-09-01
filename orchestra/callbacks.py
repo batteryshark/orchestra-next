@@ -45,7 +45,6 @@ def envelope(event: str, data: Mapping) -> bytes:
     if event not in EVENTS:
         raise ValueError(f"unsupported callback event: {event}")
     payload = json.dumps({
-        "version": 3,
         "event": event,
         "occurred_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "data": dict(data),

@@ -1,4 +1,4 @@
-"""Fresh V3 SQLite store. No migration or compatibility path exists."""
+"""Fresh Orchestra-next SQLite store. No migration or compatibility path exists."""
 from __future__ import annotations
 
 import json
@@ -250,6 +250,7 @@ def record_control(con, *, actor: str, action: str, outcome: str,
                    target_type=None, target_id=None, request_id=None, detail=None) -> int:
     encoded = None if detail is None else json.dumps(detail, ensure_ascii=False, default=str)[:8000]
     cur = con.execute("INSERT INTO control_events(actor,action,target_type,target_id,request_id,detail,outcome,created_at) VALUES(?,?,?,?,?,?,?,?)", (actor, action, target_type, None if target_id is None else str(target_id), request_id, encoded, outcome, now()))
+    bump_board_revision(con)
     return int(cur.lastrowid)
 
 

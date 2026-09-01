@@ -1,4 +1,4 @@
-"""Thin V3 HTTP client and local operator-token storage for the CLI."""
+"""Thin HTTP client and local operator-token storage for the CLI."""
 from __future__ import annotations
 
 import hashlib

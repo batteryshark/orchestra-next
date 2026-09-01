@@ -13,7 +13,7 @@ class RunClosed(RuntimeError):
 
 
 def queue(con, run_id: int, *, kind: str, body: str, sender: str, detail=None) -> dict:
-    if kind not in ("tell", "interrupt", "reroute", "resume", "stop"):
+    if kind not in ("tell", "interrupt", "pause", "reroute", "resume", "stop"):
         raise ValueError(f"unsupported run control: {kind}")
     run = con.execute("SELECT status FROM runs WHERE id=?", (run_id,)).fetchone()
     if not run:

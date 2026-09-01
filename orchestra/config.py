@@ -1,6 +1,7 @@
 """Small non-secret daemon bootstrap."""
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import tempfile
@@ -8,7 +9,15 @@ from pathlib import Path
 
 from orchestra import paths
 
-DEFAULTS = {"bind": "127.0.0.1", "port": 8766, "callback_command": []}
+DEFAULTS = {
+    "bind": "127.0.0.1",
+    "port": 8766,
+    "callback_command": [],
+    "trust_tailnet": False,
+    "trust_loopback": False,
+    "trusted_cidrs": [],
+    "allowed_hosts": [],
+}
 
 
 class ConfigError(ValueError):
@@ -29,6 +38,20 @@ def _validate(value) -> dict:
     command = result["callback_command"]
     if not isinstance(command, list) or any(not isinstance(item, str) or not item for item in command):
         raise ConfigError("callback_command must be an argv array")
+    for flag in ("trust_tailnet", "trust_loopback"):
+        if not isinstance(result[flag], bool):
+            raise ConfigError(f"{flag} must be a boolean")
+    cidrs = result["trusted_cidrs"]
+    if not isinstance(cidrs, list):
+        raise ConfigError("trusted_cidrs must be a list of CIDR strings")
+    for item in cidrs:
+        try:
+            ipaddress.ip_network(item)
+        except ValueError as exc:
+            raise ConfigError(f"trusted_cidrs entry {item!r} is not a valid network") from exc
+    hosts = result["allowed_hosts"]
+    if not isinstance(hosts, list) or any(not isinstance(item, str) or not item.strip() for item in hosts):
+        raise ConfigError("allowed_hosts must be a list of host names")
     return result
 
 

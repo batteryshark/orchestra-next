@@ -1,4 +1,4 @@
-"""Small V3 authority model: devices, integrations, and the current run."""
+"""Small authority model: devices, integrations, and the current run."""
 from __future__ import annotations
 
 import hashlib
@@ -16,6 +16,17 @@ SERVICE_AUTHORITIES = frozenset((
 ))
 RUN_AUTHORITIES = frozenset(("read", "delegate", "attention", "artifact"))
 _PAIRING_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+COOKIE_NAME = "orchestra_device"
+
+
+def cookie_header(token: str, *, max_age: int = 31536000) -> str:
+    """Set-Cookie value for a browser device bearer. Empty token clears it."""
+    return f"{COOKIE_NAME}={token}; Path=/; Max-Age={max_age}; HttpOnly; SameSite=Strict"
+
+
+def network_identity(peer: str) -> Identity:
+    """Operator-grade identity for a peer address the bootstrap file trusts."""
+    return Identity("network", peer, frozenset(("*",)))
 
 
 class AuthError(ValueError):

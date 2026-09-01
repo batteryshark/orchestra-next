@@ -40,6 +40,14 @@ def dsh_profile_source() -> Path:
     return Path(__file__).with_name("dsh-profile")
 
 
+def claude_sidecar_source() -> Path:
+    return Path(__file__).with_name("claude-sidecar")
+
+
+def claude_sidecar_dir() -> Path:
+    return owner_dir(state_dir() / "claude-sidecar")
+
+
 def dsh_home() -> Path:
     return Path(os.environ.get("DSH_HOME", "~/.dsh")).expanduser()
 
@@ -62,6 +70,14 @@ def run_session_dir(run_id: int) -> Path:
 
 def run_auth_path(run_id: int) -> Path:
     return run_dir(run_id) / "worker-auth"
+
+
+def run_claude_auth_path(run_id: int) -> Path:
+    return run_dir(run_id) / "claude-proxy-auth"
+
+
+def run_claude_data_dir(run_id: int) -> Path:
+    return owner_dir(run_dir(run_id) / "claude-sidecar-data")
 
 
 def logs_dir() -> Path:

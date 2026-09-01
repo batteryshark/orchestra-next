@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Orchestra Next</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Crect width='128' height='128' rx='28' fill='%230e1413'/%3E%3Cpath d='M24 84a40 40 0 0 1 80 0' fill='none' stroke='%233ad6c5' stroke-width='10' stroke-linecap='round'/%3E%3Ccircle cx='64' cy='84' r='9' fill='%233ad6c5'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/app.css">
+<script type="module" src="/app.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="topbar">
+  <span class="brand">
+    <svg class="mark" viewBox="0 0 128 128" aria-hidden="true"><rect width="128" height="128" rx="28" class="mark-ground"/><path d="M24 84a40 40 0 0 1 80 0" fill="none" class="mark-arc" stroke-width="10" stroke-linecap="round"/><circle cx="64" cy="84" r="9" class="mark-dot"/></svg>
+    Orchestra Next
+  </span>
+  <nav aria-label="Primary">
+    <a href="#/" data-nav="fleet">Fleet</a>
+    <a href="#/attention" data-nav="attention">Attention <span id="attention-badge" class="badge" hidden></span></a>
+    <a href="#/config" data-nav="config">Config</a>
+  </nav>
+  <div id="net-banner" class="net-banner" role="status" hidden></div>
+</header>
+
+<main id="main">
+
+<section id="view-fleet" aria-label="Fleet">
+  <div class="fleet-top">
+    <div id="counts" class="counts" role="group" aria-label="Status filters"></div>
+    <details id="new-run" class="new-run">
+      <summary class="btn btn-primary">New run</summary>
+      <form data-form="dispatch" class="dispatch">
+        <label>Objective
+          <textarea name="objective" rows="3" required placeholder="Executable objective for the run"></textarea>
+        </label>
+        <div class="grid2">
+          <label>Profile <select name="profile" required data-options="profiles"></select></label>
+          <label>Group <select name="group" data-options="groups"></select></label>
+        </div>
+        <label>Working directory <input name="cwd" class="mono" placeholder="group default" spellcheck="false"></label>
+        <fieldset class="permission">
+          <legend>Permission mode</legend>
+          <label><input type="radio" name="permission_mode" value="read-only"> read-only</label>
+          <label><input type="radio" name="permission_mode" value="workspace-write" checked> workspace-write</label>
+          <label class="danger-mode"><input type="radio" name="permission_mode" value="danger-full-access"> danger-full-access</label>
+        </fieldset>
+        <details class="advanced"><summary>Advanced</summary>
+          <div class="grid2">
+            <label>Strategy <select name="strategy"><option value="goal" selected>goal</option><option value="ralph">ralph</option></select></label>
+            <label>Title <input name="title"></label>
+            <label>Git ref <input name="ref" class="mono" spellcheck="false"></label>
+            <label>Max rounds <input name="max_rounds" type="number" min="1" max="128" placeholder="32"></label>
+            <label>Active seconds <input name="active_seconds" type="number" min="60" placeholder="7200"></label>
+            <label>Verifier timeout <input name="verify_timeout" type="number" min="1" placeholder="600"></label>
+            <label>Max children <input name="max_children" type="number" min="0"></label>
+            <label>Max child tier <input name="max_child_tier" type="number" min="1"></label>
+          </div>
+          <label>Depends on (one per line: run id, optional condition)
+            <textarea name="after" rows="2" class="mono" placeholder="12&#10;13 terminal"></textarea>
+          </label>
+          <label>Verifier argv (one argument per line)
+            <textarea name="verify" rows="2" class="mono" placeholder="python&#10;-m&#10;unittest"></textarea>
+          </label>
+        </details>
+        <p class="form-error" hidden></p>
+        <p><button type="submit" class="btn btn-primary">Dispatch</button></p>
+      </form>
+    </details>
+  </div>
+  <div class="filter-bar" role="search">
+    <input id="filter-text" data-filter="text" type="search" placeholder="Filter runs ( / )" aria-label="Filter runs">
+    <select data-filter="group" data-options="groups" aria-label="Filter by group"><option value="">All groups</option></select>
+    <select data-filter="profile" data-options="profiles" aria-label="Filter by profile"><option value="">All profiles</option></select>
+  </div>
+  <p id="fleet-state" class="view-state">Loading runs…</p>
+  <ol id="run-list" class="run-list"></ol>
+  <p class="load-more"><button class="btn" data-action="load-more" hidden>Load older runs</button></p>
+</section>
+
+<section id="view-run" aria-label="Run detail" hidden>
+  <header id="run-header" class="run-header"></header>
+  <div id="run-tabs" class="run-tabs" role="tablist" aria-label="Run sections"></div>
+  <section id="sec-activity" data-sec="activity" role="tabpanel">
+    <div class="feed-toolbar">
+      <label class="machine-toggle"><input type="checkbox" id="follow-live" checked> Follow live</label>
+      <label class="machine-toggle"><input type="checkbox" id="show-machine"> Show machine events <span id="machine-count" class="muted"></span></label>
+      <span id="history-note" class="muted" hidden>history truncated</span>
+    </div>
+    <div id="feed-brief" class="feed-brief" hidden></div>
+    <div id="feed" class="feed" tabindex="0" aria-label="Run activity"></div>
+    <div id="feed-handoff" class="feed-handoff" hidden></div>
+    <button id="return-live" class="btn return-live" hidden>Return to live</button>
+  </section>
+  <section id="sec-changes" data-sec="changes" role="tabpanel" hidden></section>
+  <section id="sec-artifacts" data-sec="artifacts" role="tabpanel" hidden></section>
+  <section id="sec-usage" data-sec="usage" role="tabpanel" hidden></section>
+  <section id="sec-evidence" data-sec="evidence" role="tabpanel" hidden></section>
+</section>
+
+<section id="view-attention" aria-label="Attention inbox" hidden>
+  <h1>Attention</h1>
+  <p id="attention-state" class="view-state">Loading…</p>
+  <div id="attention-list"></div>
+</section>
+
+<section id="view-config" aria-label="Configuration" hidden>
+  <h1>Configuration</h1>
+  <section><h2>Profiles</h2><div id="config-profiles"></div></section>
+  <section><h2>Groups</h2><div id="config-groups"></div></section>
+  <section><h2>Diagnostics</h2><div id="config-diagnostics"></div>
+    <p><button class="btn" data-action="logout">Log out this browser</button></p>
+  </section>
+</section>
+
+<section id="view-pairing" aria-label="Pair this browser" hidden>
+  <div class="pairing-card">
+    <h1>Pair this browser</h1>
+    <p>Run <code>orchestra-next pair</code> in a terminal, then enter the code.</p>
+    <form data-form="pair">
+      <label>Pairing code <input name="code" class="mono" autocomplete="one-time-code" placeholder="XXXX-XXXX-XXXX" required></label>
+      <label>Device name <input name="name" value="Browser" required></label>
+      <p class="form-error" hidden></p>
+      <p><button type="submit" class="btn btn-primary">Pair</button></p>
+    </form>
+  </div>
+</section>
+
+</main>
+
+<dialog id="direct" class="direct-dialog">
+  <form data-form="direct">
+    <h2 id="direct-title">Direct this run</h2>
+    <textarea name="message" rows="3" placeholder="Direction for the model ( Cmd+Enter tells )" aria-label="Direction"></textarea>
+    <p class="form-error" hidden></p>
+    <div class="dialog-buttons">
+      <button type="button" class="btn" data-action="direct-cancel">Cancel</button>
+      <button type="submit" name="verb" value="interrupt" class="btn">Interrupt now</button>
+      <button type="submit" name="verb" value="tell" class="btn btn-primary">Tell at boundary</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="confirm">
+  <form method="dialog">
+    <h2 id="confirm-title"></h2>
+    <p id="confirm-body"></p>
+    <label id="confirm-input-label" hidden><span id="confirm-input-name"></span> <input id="confirm-input"></label>
+    <div class="dialog-buttons">
+      <button value="cancel" class="btn">Cancel</button>
+      <button value="ok" id="confirm-ok" class="btn btn-primary"></button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" role="status" aria-live="polite"></div>
+<div id="fatal" role="alert" hidden></div>
+<noscript><p class="view-state">The Orchestra Next console requires JavaScript. The JSON API at /api remains available.</p></noscript>
+</body>
+</html>

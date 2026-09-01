@@ -1,0 +1,11 @@
+{
+  "name": "orchestra-next-claude-sidecar",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@openchamber/opencode-claude": "0.14.0"
+  },
+  "devDependencies": {
+    "bun": "1.4.0"
+  }
+}

@@ -16,7 +16,8 @@ class StateCase(unittest.TestCase):
         self.dsh_home = self.root / "dsh"
         self.old = {name: os.environ.get(name) for name in (
             "ORCHESTRA_NEXT_HOME", "DSH_HOME", "ORCHESTRA_NEXT_DSH", "FAKE_DSH_MODE",
-            "DEEPSEEK_API_KEY", "ORCHESTRA_NEXT_TOKEN", "ORCHESTRA_NEXT_RUN_AUTH_FILE")}
+            "DEEPSEEK_API_KEY", "ORCHESTRA_NEXT_TOKEN", "ORCHESTRA_NEXT_RUN_AUTH_FILE",
+            "ORCHESTRA_NEXT_CLAUDE", "ORCHESTRA_NEXT_NPM")}
         os.environ["ORCHESTRA_NEXT_HOME"] = str(self.state)
         os.environ["DSH_HOME"] = str(self.dsh_home)
         os.environ["ORCHESTRA_NEXT_DSH"] = str(Path(__file__).with_name("fake_dsh.py"))
@@ -24,6 +25,8 @@ class StateCase(unittest.TestCase):
         os.environ.pop("DEEPSEEK_API_KEY", None)
         os.environ.pop("ORCHESTRA_NEXT_TOKEN", None)
         os.environ.pop("ORCHESTRA_NEXT_RUN_AUTH_FILE", None)
+        os.environ.pop("ORCHESTRA_NEXT_CLAUDE", None)
+        os.environ.pop("ORCHESTRA_NEXT_NPM", None)
         self.con = db.connect()
 
     def tearDown(self):

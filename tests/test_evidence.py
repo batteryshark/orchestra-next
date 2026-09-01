@@ -40,7 +40,8 @@ class EvidenceTests(StateCase):
 
     def test_callback_contract_has_no_observer_event(self):
         value = json.loads(callbacks.envelope("run.terminal", {"run_id": 1}))
-        self.assertEqual(value["version"], 3)
+        self.assertNotIn("version", value)
+        self.assertEqual(value["event"], "run.terminal")
         with self.assertRaises(ValueError):
             callbacks.envelope("observer.stopped", {})
 

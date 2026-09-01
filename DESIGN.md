@@ -6,11 +6,11 @@ Orchestra-next schedules durable work. DSH performs model interaction.
 
 Orchestra owns run state, FIFO/dependency admission, concurrency, Git worktrees and evidence, external waits, permissions, verification, children, artifacts, controls, authentication, callbacks, storage, and recovery. DSH owns the model request loop, tools, cache-aware compaction, pruning, persisted goals, same-session goal rounds, and explicit Ralph workflows.
 
-There is no runtime abstraction or adapter matrix. `orchestra.dsh.launch` is the only process builder and `orchestra.acp.Peer` is the only model transport.
+There is no runtime abstraction or adapter matrix. `orchestra.dsh.launch` is the only DSH process builder and `orchestra.acp.Peer` is the only Orchestra-to-model transport. The optional Claude subscription route is a per-run loopback sidecar that presents a standard OpenAI-compatible provider to DSH; no Claude behavior enters the durable core.
 
 ## Durable state
 
-The fresh V3 SQLite store refuses every other schema. A run freezes its request and route profile but leaves provider credentials, endpoints, retention settings, and the live model catalog in DSH.
+The fresh SQLite store refuses every other schema. A run freezes its request and route profile but leaves provider credentials, endpoints, retention settings, and the live model catalog in DSH.
 
 Each run has one root DSH session and a private directory:
 
@@ -18,6 +18,8 @@ Each run has one root DSH session and a private directory:
 ~/.orchestra-next/runs/<id>/
   acp.jsonl
   worker-auth
+  claude-proxy-auth       # present only while a Claude sidecar is active
+  claude-sidecar-data/    # per-run Claude session binding
   dsh-session/
 ```
 
@@ -43,12 +45,21 @@ Profiles contain only provider, model, optional effort, tier, capacity, lifecycl
 
 `reroute` cancels current activity, sets `model` and `reasoning_effort` through ACP, increments `cache_epoch`, and appends direction to the same session. A new epoch is explicit evidence that provider cache continuity was intentionally broken.
 
+Selecting `claude-subscription` lazily starts one authenticated sidecar on an
+OS-assigned loopback port. DSH sees only its ordinary `openai-completions`
+surface. DSH tools cross the sidecar as MCP park/resume calls, while a stable
+run header and run-private binding store preserve the official Claude CLI
+session across sidecar restarts. Rerouting into Claude restarts and resumes DSH
+once so the process receives the new ephemeral endpoint; rerouting away leaves
+the already-owned sidecar alive until normal supervisor cleanup.
+
 ## Safety
 
 - The normal DSH profile disables telemetry, native elicitation, plan mode, subagents, workflows, and Ralph.
 - Ralph capabilities exist only in the explicit overlay.
 - Verifiers use `subprocess.run(argv, shell=False)` with bounded output and timeout.
 - Worker bearers live in `0600` files referenced by a non-secret environment path.
+- Claude proxy bearers are distinct, short-lived, stored in `0600` files, and accepted only by per-run loopback listeners.
 - Artifact publication uses descriptor-relative, no-follow opens and immutable copies.
 - Attention leases prevent automated responders from racing; a human device may override a lease, and every lease, answer, approval, route, and control is audited.
 - Storage pruning is a reviewable plan whose application moves evidence to an instance-owned trash directory.
