@@ -67,6 +67,21 @@ class UiLogicTests(unittest.TestCase):
         self.assertEqual(value["excerpt"], "first line")
         self.assertEqual(value["countdown_expired"], "expired")
 
+    def test_runs_query_builds_server_filters(self):
+        value = self.evaluate("""({
+          none: runsQuery({status: new Set(), group: "", profile: "", text: "x"}),
+          failed: runsQuery({status: new Set(["failed"]), group: "", profile: ""}),
+          ids: runsQuery({status: new Set(["running", "queued"]), group: "g-7", profile: "p-3", strategy: "ralph"}),
+          before: runsQuery({status: new Set(), group: "", profile: ""}, {before: 41, limit: 50}),
+          strategy_client_side: filterRuns([{strategy: "goal", status: "running"}, {strategy: "ralph", status: "running"}],
+            {status: new Set(), group: "", profile: "", text: "", strategy: "ralph"}).length,
+        })""")
+        self.assertEqual(value["none"], "order=desc&limit=200")
+        self.assertEqual(value["failed"], "order=desc&limit=200&status=failed,timed_out")
+        self.assertEqual(value["ids"], "order=desc&limit=200&status=starting,running,queued&group=g-7&profile=p-3")
+        self.assertEqual(value["before"], "order=desc&limit=50&before=41")
+        self.assertEqual(value["strategy_client_side"], 1)
+
     def test_merge_thread_orders_and_keys(self):
         value = self.evaluate("""mergeThread(
           [{id: 2, created_at: "2026-01-01T00:00:02+00:00", type: "b"},

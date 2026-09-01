@@ -146,12 +146,25 @@ function filterRuns(runs, filters) {
     if (statuses.size && !statuses.has(run.status)) return false;
     if (filters.group && String(run.group_id) !== filters.group) return false;
     if (filters.profile && String(run.profile_id) !== filters.profile) return false;
+    if (filters.strategy && run.strategy !== filters.strategy) return false;
     if (text) {
       const haystack = `${run.id} ${run.slug ?? ""} ${run.title ?? ""} ${run.objective ?? ""}`.toLowerCase();
       if (!haystack.includes(text)) return false;
     }
     return true;
   });
+}
+
+// Server-side part of the fleet filters. Text and strategy stay client-side.
+function runsQuery(filters, { before = null, limit = PAGE_RUNS } = {}) {
+  const params = [`order=desc`, `limit=${limit}`];
+  const statuses = [];
+  for (const group of filters.status) statuses.push(...(STATUS_GROUPS[group] || []));
+  if (statuses.length) params.push(`status=${statuses.join(",")}`);
+  if (filters.group) params.push(`group=${encodeURIComponent(filters.group)}`);
+  if (filters.profile) params.push(`profile=${encodeURIComponent(filters.profile)}`);
+  if (before) params.push(`before=${before}`);
+  return params.join("&");
 }
 
 // DSH journal messages carry typed parts: reasoning, text, tool-call, tool-result.
@@ -544,8 +557,7 @@ const store = {
   boardRevision: -1,
   snapshotsStale: true,
   runs: new Map(),
-  runsFloor: null, // smallest loaded run id, for Load older
-  runsExhausted: false,
+  runsWindow: { signature: "", floor: null, exhausted: false }, // loaded page of /api/runs: its query, oldest id, end reached
   attention: [],
   profiles: [],
   groups: [],
@@ -607,8 +619,7 @@ function resetStore(instanceId) {
   store.boardRevision = -1;
   store.snapshotsStale = true;
   store.runs.clear();
-  store.runsFloor = null;
-  store.runsExhausted = false;
+  store.runsWindow = { signature: "", floor: null, exhausted: false };
   store.attention = [];
   store.cursorsEvents = null;
   resetDetail(store.detail.id);
@@ -818,8 +829,13 @@ function setBanner(message) {
 }
 
 async function refreshSnapshots() {
+  const signature = runsQuery(store.filters);
+  if (signature !== store.runsWindow.signature) {
+    store.runs.clear();
+    store.runsWindow = { signature, floor: null, exhausted: false };
+  }
   const [runs, attention, profiles, groups] = await Promise.all([
-    api.get(`/api/runs?order=desc&limit=${PAGE_RUNS}`),
+    api.get(`/api/runs?${signature}`),
     api.get("/api/attention?status=open"),
     api.get("/api/profiles"),
     api.get("/api/groups"),
@@ -827,10 +843,10 @@ async function refreshSnapshots() {
   for (const run of runs) store.runs.set(run.id, run);
   if (runs.length) {
     const floor = runs[runs.length - 1].id;
-    if (store.runsFloor === null || floor < store.runsFloor) store.runsFloor = floor;
-    if (runs.length < PAGE_RUNS) store.runsExhausted = true;
+    if (store.runsWindow.floor === null || floor < store.runsWindow.floor) store.runsWindow.floor = floor;
+    if (runs.length < PAGE_RUNS) store.runsWindow.exhausted = true;
   } else {
-    store.runsExhausted = true;
+    store.runsWindow.exhausted = true;
   }
   store.attention = attention;
   store.profiles = profiles;
@@ -929,18 +945,31 @@ function actionError(message) {
   strip.hidden = !message;
 }
 
+// Server-side filters changed: the loaded window no longer matches, refetch page one.
+function refetchFleet() {
+  store.snapshotsStale = true;
+  markDirty("fleet");
+  schedule(true);
+}
+
 const ACTIONS = {
   "load-more": (button) => act("load-more", button, async () => {
-    const older = await api.get(`/api/runs?order=desc&limit=${PAGE_RUNS}&before=${store.runsFloor}`);
+    const older = await api.get(`/api/runs?${runsQuery(store.filters, { before: store.runsWindow.floor })}`);
     for (const run of older) store.runs.set(run.id, run);
-    if (older.length) store.runsFloor = older[older.length - 1].id;
-    if (older.length < PAGE_RUNS) store.runsExhausted = true;
+    if (older.length) store.runsWindow.floor = older[older.length - 1].id;
+    if (older.length < PAGE_RUNS) store.runsWindow.exhausted = true;
     markDirty("fleet");
   }),
   "filter-status": (button) => {
     const key = button.dataset.status;
     if (store.filters.status.has(key)) store.filters.status.delete(key);
     else store.filters.status.add(key);
+    saveUiState();
+    refetchFleet();
+  },
+  "filter-strategy": (button) => {
+    const key = button.dataset.strategy;
+    store.filters.strategy = store.filters.strategy === key ? "" : key;
     saveUiState();
     markDirty("fleet");
   },
@@ -1184,30 +1213,36 @@ function renderFleet() {
   for (const select of document.querySelectorAll("select[data-options=groups]")) fillOptions(select, store.groups, select.dataset.filter ? "group_id" : "slug", "slug");
 
   const runs = [...store.runs.values()].sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
-  const counts = { queued: 0, running: 0, waiting: 0, failed: 0 };
+  // Counts cover the loaded window; with a server-side filter that window is a subset, hence "in view".
+  const counts = { queued: 0, running: 0, waiting: 0, failed: 0, goal: 0, ralph: 0 };
   for (const run of runs) {
     for (const [key, statuses] of Object.entries(STATUS_GROUPS)) {
       if (key !== "done" && statuses.includes(run.status)) counts[key] = (counts[key] || 0) + 1;
     }
+    if (run.strategy in counts) counts[run.strategy] += 1;
   }
   const countsBox = document.getElementById("counts");
   const entries = [
-    ["running", "running", ""],
-    ["queued", "queued", ""],
-    ["waiting", "waiting", "warn"],
-    ["failed", "failed", "bad"],
+    ["running", "running", "", "filter-status"],
+    ["queued", "queued", "", "filter-status"],
+    ["waiting", "waiting", "warn", "filter-status"],
+    ["failed", "failed", "bad", "filter-status"],
+    ["goal", "goal", "", "filter-strategy"],
+    ["ralph", "ralph", "", "filter-strategy"],
   ];
+  const pressed = (entry) => entry[3] === "filter-status" ? store.filters.status.has(entry[0]) : store.filters.strategy === entry[0];
   keyedList(countsBox, entries, (entry) => entry[0],
-    (entry) => `${counts[entry[0]] || 0}:${store.filters.status.has(entry[0])}`,
+    (entry) => `${counts[entry[0]] || 0}:${pressed(entry)}`,
     (entry) => {
-      const button = el("button", { type: "button", class: entry[2], dataset: { action: "filter-status", status: entry[0] }, "aria-pressed": String(store.filters.status.has(entry[0])) },
+      const dataset = { action: entry[3], [entry[3] === "filter-status" ? "status" : "strategy"]: entry[0] };
+      return el("button", { type: "button", class: entry[2], dataset, "aria-pressed": String(pressed(entry)) },
         el("strong", { text: String(counts[entry[0]] || 0) }), entry[1]);
-      return button;
     },
     (node, entry) => {
       node.querySelector("strong").textContent = String(counts[entry[0]] || 0);
-      node.setAttribute("aria-pressed", String(store.filters.status.has(entry[0])));
+      node.setAttribute("aria-pressed", String(pressed(entry)));
     });
+  document.getElementById("counts-scope").hidden = runsQuery(store.filters) === runsQuery({ status: new Set() });
 
   const visible = filterRuns(runs, store.filters);
   const state = document.getElementById("fleet-state");
@@ -1219,7 +1254,7 @@ function renderFleet() {
 
   const list = document.getElementById("run-list");
   keyedList(list, visible, (run) => run.id, runSignature, buildRunRow, updateRunRow);
-  document.querySelector("[data-action=load-more]").hidden = store.runsExhausted || store.runsFloor === null;
+  document.querySelector("[data-action=load-more]").hidden = store.runsWindow.exhausted || store.runsWindow.floor === null;
 }
 
 function runRowChildren(run) {
@@ -2824,7 +2859,8 @@ function onFilterInput(event) {
   filterDebounce = setTimeout(() => {
     store.filters[field.dataset.filter] = field.value;
     saveUiState();
-    markDirty("fleet");
+    if (field.dataset.filter === "text") markDirty("fleet");
+    else refetchFleet();
   }, field.dataset.filter === "text" ? 150 : 0);
 }
 document.addEventListener("input", onFilterInput);
