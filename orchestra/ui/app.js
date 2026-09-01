@@ -1731,8 +1731,8 @@ function rerouteBody(key, effort, message) {
 // --- end slice2-evidence ---
 
 // --- slice2-config ---
-store.models = null; // /api/models catalog rows, or null until loaded
-store.modelsError = "";
+store.catalog = null; // /api/models rows for the profile form, or null until loaded
+store.catalogError = "";
 store.identities = null; // { devices, tokens, revision }
 
 function tableHead(labels) {
@@ -1777,21 +1777,21 @@ function loadIdentities() {
   }).catch((error) => configError(document.getElementById("config-identities"), error.message));
 }
 
-function loadModels(form) {
+function loadCatalog(form) {
   return api.get("/api/models").then((value) => {
-    store.models = value.models;
-    store.modelsError = "";
+    store.catalog = value.models;
+    store.catalogError = "";
   }).catch((error) => {
-    store.models = null;
-    store.modelsError = `Model catalog unavailable (${error.message}). Enter provider, model, and effort by hand.`;
+    store.catalog = null;
+    store.catalogError = `Model catalog unavailable (${error.message}). Enter provider, model, and effort by hand.`;
   }).then(() => {
     fillRouteLists(form);
-    formError(form, store.modelsError);
+    formError(form, store.catalogError);
   });
 }
 
 function fillRouteLists(form) {
-  const models = store.models || [];
+  const models = store.catalog || [];
   const provider = form.elements.provider.value.trim();
   const model = form.elements.model.value.trim();
   const option = (value) => el("option", { value });
@@ -1808,10 +1808,10 @@ function openProfileDialog(profile) {
   document.getElementById("profile-dialog-title").textContent = profile ? `Edit profile ${profile.slug}` : "New profile";
   form.elements.slug.closest("label").hidden = Boolean(profile);
   if (profile) for (const key of PROFILE_FIELDS) form.elements[key].value = profile[key] ?? "";
-  formError(form, store.modelsError);
+  formError(form, store.catalogError);
   fillRouteLists(form);
   dialog.showModal();
-  if (store.models === null) loadModels(form);
+  if (store.catalog === null) loadCatalog(form);
 }
 
 async function groupEdit(button, field) {
@@ -2054,7 +2054,7 @@ document.addEventListener("change", onFilterInput);
 
 document.addEventListener("keydown", (event) => {
   const typing = event.target.matches("input,textarea,select") || event.target.isContentEditable;
-  const dialogOpen = document.getElementById("confirm").open;
+  const dialogOpen = Boolean(document.querySelector("dialog[open]"));
   if (event.key === "Escape" && !dialogOpen) {
     if (store.route.view !== "fleet" && !typing) location.hash = "#/";
     return;

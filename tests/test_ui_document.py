@@ -1,5 +1,8 @@
 """Static conformance of the console document: CSP-safe, sentinel-sliced, wired."""
 import re
+import shutil
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -15,6 +18,15 @@ class DocumentConformanceTests(unittest.TestCase):
     def test_files_exist_and_are_nonempty(self):
         for name in ("index.html", "app.css", "app.js"):
             self.assertTrue((UI_DIR / name).stat().st_size > 100, name)
+
+    def test_app_js_parses_as_one_module(self):
+        if shutil.which("node") is None:
+            self.skipTest("node is unavailable")
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder) / "app.mjs"
+            target.write_text(self.js, encoding="utf-8")
+            result = subprocess.run(["node", "--check", str(target)], capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_app_js_never_uses_html_injection(self):
         for marker in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"):
