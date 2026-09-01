@@ -170,7 +170,237 @@ function extractText(payload) {
 // --- end logic ---
 
 // --- qr ---
-// Reserved for the pairing QR encoder (slice 3).
+// QR encoder: byte mode, error correction level M, versions 1 to 10. Pure
+// functions only (no DOM): tests/test_ui_qr.py slices this block, runs it
+// under node, and pins qrMatrix to matrices that macOS Vision decoded byte
+// for byte (ported from the V2 dashboard encoder).
+const QR_TOTAL = [26, 44, 70, 100, 134, 172, 196, 242, 292, 346];
+const QR_BLOCKS = [
+  [10, [[1, 16]]], [16, [[1, 28]]], [26, [[1, 44]]], [18, [[2, 32]]], [24, [[2, 43]]],
+  [16, [[4, 27]]], [18, [[4, 31]]], [22, [[2, 38], [2, 39]]], [22, [[3, 36], [2, 37]]], [26, [[4, 43], [1, 44]]],
+];
+const QR_ALIGN = [[], [6, 18], [6, 22], [6, 26], [6, 30], [6, 34], [6, 22, 38], [6, 24, 42], [6, 26, 46], [6, 28, 50]];
+const QR_EXP = new Array(512);
+const QR_LOG = new Array(256);
+for (let i = 0, x = 1; i < 255; i += 1) {
+  QR_EXP[i] = x;
+  QR_LOG[x] = i;
+  x <<= 1;
+  if (x & 256) x ^= 0x11d;
+}
+for (let i = 255; i < 512; i += 1) QR_EXP[i] = QR_EXP[i - 255];
+
+function qrMul(a, b) {
+  return a && b ? QR_EXP[QR_LOG[a] + QR_LOG[b]] : 0;
+}
+
+function qrGenerator(degree) {
+  let poly = [1];
+  for (let i = 0; i < degree; i += 1) {
+    const next = new Array(poly.length + 1).fill(0);
+    for (let j = 0; j < poly.length; j += 1) {
+      next[j] ^= qrMul(poly[j], 1);
+      next[j + 1] ^= qrMul(poly[j], QR_EXP[i]);
+    }
+    poly = next;
+  }
+  return poly;
+}
+
+function qrRemainder(data, degree) {
+  const gen = qrGenerator(degree);
+  const out = new Array(degree).fill(0);
+  for (const byte of data) {
+    const factor = byte ^ out[0];
+    out.shift();
+    out.push(0);
+    for (let i = 0; i < degree; i += 1) out[i] ^= qrMul(gen[i + 1], factor);
+  }
+  return out;
+}
+
+function qrBCH(value, poly) {
+  const degree = 31 - Math.clz32(poly);
+  let rest = value << degree;
+  for (let i = 31 - Math.clz32(rest); i >= degree; i -= 1) {
+    if (rest >>> i & 1) rest ^= poly << (i - degree);
+  }
+  return (value << degree) | rest;
+}
+
+function qrPenalty(grid, size) {
+  let score = 0;
+  const line = (cells) => {
+    let run = 1;
+    for (let i = 1; i < size; i += 1) {
+      if (cells[i] === cells[i - 1]) {
+        run += 1;
+      } else {
+        if (run >= 5) score += 3 + run - 5;
+        run = 1;
+      }
+    }
+    if (run >= 5) score += 3 + run - 5;
+  };
+  const FIND = [1, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0];
+  const finder = (cells) => {
+    for (let i = 0; i + 11 <= size; i += 1) {
+      const w = cells.slice(i, i + 11);
+      if (FIND.every((v, k) => w[k] === v) || FIND.every((v, k) => w[10 - k] === v)) score += 40;
+    }
+  };
+  for (let i = 0; i < size; i += 1) {
+    const row = grid[i];
+    const column = grid.map((r) => r[i]);
+    line(row);
+    line(column);
+    finder(row);
+    finder(column);
+  }
+  for (let i = 0; i < size - 1; i += 1) {
+    for (let j = 0; j < size - 1; j += 1) {
+      if (grid[i][j] === grid[i][j + 1] && grid[i][j] === grid[i + 1][j] && grid[i][j] === grid[i + 1][j + 1]) score += 3;
+    }
+  }
+  score += Math.floor(Math.abs(grid.flat().reduce((n, v) => n + v, 0) * 100 / (size * size) - 50) / 5) * 10;
+  return score;
+}
+
+function qrMatrix(text) {
+  const bytes = Array.from(new TextEncoder().encode(text));
+  const version = QR_TOTAL.findIndex((total, i) => QR_BLOCKS[i][1].reduce((n, [count, size]) => n + count * size, 0) * 8 >= 4 + (i < 9 ? 8 : 16) + bytes.length * 8) + 1;
+  if (!version) throw new Error("Too much data for a compact QR code.");
+  const [ecPerBlock, groups] = QR_BLOCKS[version - 1];
+  const dataCount = groups.reduce((n, [count, size]) => n + count * size, 0);
+
+  // Data bits: mode 4 (byte), length, payload, terminator, byte padding.
+  const bits = [];
+  const push = (value, width) => {
+    for (let i = width - 1; i >= 0; i -= 1) bits.push(value >>> i & 1);
+  };
+  push(4, 4);
+  push(bytes.length, version < 10 ? 8 : 16);
+  bytes.forEach((b) => push(b, 8));
+  for (let i = 0; i < 4 && bits.length < dataCount * 8; i += 1) bits.push(0);
+  while (bits.length % 8) bits.push(0);
+  const words = [];
+  for (let i = 0; i < bits.length; i += 8) words.push(parseInt(bits.slice(i, i + 8).join(""), 2));
+  for (let pad = 0; words.length < dataCount; pad ^= 1) words.push(pad ? 0x11 : 0xec);
+
+  // Reed-Solomon blocks, interleaved data then EC.
+  const blocks = [];
+  const ecBlocks = [];
+  let at = 0;
+  for (const [count, size] of groups) {
+    for (let i = 0; i < count; i += 1) {
+      const block = words.slice(at, at + size);
+      at += size;
+      blocks.push(block);
+      ecBlocks.push(qrRemainder(block, ecPerBlock));
+    }
+  }
+  const stream = [];
+  const widest = Math.max(...blocks.map((b) => b.length));
+  for (let i = 0; i < widest; i += 1) for (const block of blocks) if (i < block.length) stream.push(block[i]);
+  for (let i = 0; i < ecPerBlock; i += 1) for (const block of ecBlocks) stream.push(block[i]);
+
+  // Function patterns: finders, alignment, timing, dark module.
+  const size = version * 4 + 17;
+  const grid = Array.from({ length: size }, () => new Array(size).fill(null));
+  const set = (r, c, v) => {
+    if (r >= 0 && r < size && c >= 0 && c < size) grid[r][c] = v;
+  };
+  const finder = (r, c) => {
+    for (let i = -1; i < 8; i += 1) {
+      for (let j = -1; j < 8; j += 1) {
+        const inside = i >= 0 && i < 7 && j >= 0 && j < 7;
+        set(r + i, c + j, inside && (i === 0 || i === 6 || j === 0 || j === 6 || (i >= 2 && i <= 4 && j >= 2 && j <= 4)) ? 1 : 0);
+      }
+    }
+  };
+  finder(0, 0);
+  finder(0, size - 7);
+  finder(size - 7, 0);
+  for (const centre of QR_ALIGN[version - 1]) {
+    for (const other of QR_ALIGN[version - 1]) {
+      if ((centre === 6 && other === 6) || (centre === 6 && other === size - 7) || (centre === size - 7 && other === 6)) continue;
+      for (let i = -2; i <= 2; i += 1) for (let j = -2; j <= 2; j += 1) set(centre + i, other + j, Math.max(Math.abs(i), Math.abs(j)) !== 1 ? 1 : 0);
+    }
+  }
+  for (let i = 8; i < size - 8; i += 1) {
+    set(6, i, i % 2 ? 0 : 1);
+    set(i, 6, i % 2 ? 0 : 1);
+  }
+  set(size - 8, 8, 1);
+
+  // Reserved cells: everything placed so far, format bits, version bits.
+  const reserved = Array.from({ length: size }, () => new Array(size).fill(false));
+  for (let i = 0; i < size; i += 1) for (let j = 0; j < size; j += 1) if (grid[i][j] !== null) reserved[i][j] = true;
+  const formatCells = [];
+  for (let i = 0; i < 15; i += 1) {
+    const a = i < 6 ? [i, 8] : i === 6 ? [7, 8] : i === 7 ? [8, 8] : i === 8 ? [8, 7] : [8, 14 - i];
+    const b = i < 8 ? [8, size - 1 - i] : [size - 15 + i, 8];
+    formatCells.push([a, b]);
+    reserved[a[0]][a[1]] = true;
+    reserved[b[0]][b[1]] = true;
+  }
+  if (version >= 7) {
+    for (let i = 0; i < 18; i += 1) {
+      const r = Math.floor(i / 3);
+      const c = i % 3;
+      reserved[size - 11 + c][r] = true;
+      reserved[r][size - 11 + c] = true;
+    }
+  }
+
+  // Zigzag placement of the codeword bits, skipping the timing column.
+  const payload = [];
+  stream.forEach((word) => {
+    for (let i = 7; i >= 0; i -= 1) payload.push(word >>> i & 1);
+  });
+  let bit = 0;
+  for (let right = size - 1; right > 0; right -= 2) {
+    if (right === 6) right = 5;
+    for (let step = 0; step < size; step += 1) {
+      const row = (Math.floor((size - 1 - right) / 2) % 2 === 0) ? size - 1 - step : step;
+      for (const column of [right, right - 1]) if (!reserved[row][column]) grid[row][column] = bit < payload.length ? payload[bit++] : 0;
+    }
+  }
+
+  // Try every mask; keep the lowest penalty.
+  const maskAt = (m, i, j) => [
+    (i + j) % 2, i % 2, j % 3, (i + j) % 3,
+    (Math.floor(i / 2) + Math.floor(j / 3)) % 2,
+    (i * j) % 2 + (i * j) % 3,
+    ((i * j) % 2 + (i * j) % 3) % 2,
+    ((i + j) % 2 + (i * j) % 3) % 2,
+  ][m] === 0;
+  let best = null;
+  for (let mask = 0; mask < 8; mask += 1) {
+    const view = grid.map((row) => row.slice());
+    for (let i = 0; i < size; i += 1) for (let j = 0; j < size; j += 1) if (!reserved[i][j] && maskAt(mask, i, j)) view[i][j] ^= 1;
+    const format = qrBCH(mask, 0x537) ^ 0x5412; // level M is 0, so the value is the mask
+    formatCells.forEach(([a, b], i) => {
+      const value = format >>> i & 1;
+      view[a[0]][a[1]] = value;
+      view[b[0]][b[1]] = value;
+    });
+    if (version >= 7) {
+      const info = qrBCH(version, 0x1f25);
+      for (let i = 0; i < 18; i += 1) {
+        const value = info >>> i & 1;
+        const r = Math.floor(i / 3);
+        const c = i % 3;
+        view[size - 11 + c][r] = value;
+        view[r][size - 11 + c] = value;
+      }
+    }
+    view[size - 8][8] = 1;
+    const score = qrPenalty(view, size);
+    if (best === null || score < best.score) best = { score, view };
+  }
+  return best.view;
+}
 // --- end qr ---
 
 // --- api ---
@@ -1478,9 +1708,6 @@ function renderConfigIdentities() {
     el("p", { class: "config-toolbar" }, el("button", { class: "btn btn-primary", dataset: { action: "token-new" }, text: "New service token…" })),
     data.tokens.length ? tokens : el("p", { class: "view-state", text: "No service tokens." }));
 }
-function renderConfigPairing() {}
-function renderConfigStorage() {}
-function renderConfigAudit() {}
 
 function renderConfigProfiles() {
   const profiles = document.getElementById("config-profiles");
@@ -2129,6 +2356,253 @@ function modelEfforts(models, provider, model) {
 // --- end config-logic ---
 
 // --- slice3-admin ---
+// Storage prune plans, the controls/callbacks audit feeds, and pairing another
+// device (code + countdown + QR of this console's #/pair/{code} link).
+function adminState() {
+  if (store.admin?.instance !== store.instanceId) {
+    store.admin = {
+      instance: store.instanceId, storage: null, storageLoading: false, plan: null, pairing: null,
+      controls: { rows: [], after: 0, filter: "", loaded: false },
+      callbacks: { rows: [], after: 0, filter: "", loaded: false },
+    };
+  }
+  return store.admin;
+}
+
+function stale(node, sig) {
+  if (node._sig === sig) return false;
+  node._sig = sig;
+  return true;
+}
+
+function planTotals(items) {
+  return { count: items.length, bytes: items.reduce((n, item) => n + (item.size_bytes || 0), 0) };
+}
+
+function svgEl(tag, attrs) {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+  return node;
+}
+
+function qrSvg(text) {
+  let grid;
+  try {
+    grid = qrMatrix(text);
+  } catch {
+    return el("p", { class: "form-error", text: "The pairing link is too long for a QR code; type the code instead." });
+  }
+  const quiet = 4;
+  const size = grid.length + quiet * 2;
+  let path = "";
+  for (let r = 0; r < grid.length; r += 1) for (let c = 0; c < grid.length; c += 1) if (grid[r][c]) path += `M${c + quiet} ${r + quiet}h1v1h-1z`;
+  const svg = svgEl("svg", { class: "qr", viewBox: `0 0 ${size} ${size}`, "shape-rendering": "crispEdges", role: "img", "aria-label": "QR code of the pairing link" });
+  svg.append(svgEl("rect", { class: "qr-ground", width: size, height: size }), svgEl("path", { class: "qr-ink", d: path }));
+  return svg;
+}
+
+function renderConfigPairing() {
+  const box = document.getElementById("config-pairing");
+  const pairing = adminState().pairing;
+  if (stale(box, pairing?.code ?? "")) {
+    const parts = [
+      el("p", { class: "muted", text: "A code pairs one more browser. Scan the QR with the other device to open this console with the code filled in, or type the code on its pairing screen." }),
+      el("p", null, el("button", { type: "button", class: "btn btn-primary", dataset: { action: "pair-create" }, text: pairing ? "Create another code" : "Create pairing code" })),
+      el("p", { class: "form-error", hidden: "" }),
+    ];
+    if (pairing) {
+      const link = `${location.origin}/#/pair/${pairing.code}`;
+      parts.push(el("div", { class: "pair-box" }, qrSvg(link), el("div", null,
+        el("div", { class: "pair-code", text: pairing.code }),
+        el("div", { class: "muted" }, "expires in ", el("span", { class: "countdown", dataset: { expires: pairing.expires_at }, text: fmt.countdown(pairing.expires_at) })),
+        el("div", { class: "mono faint", text: link }))));
+    }
+    box.replaceChildren(...parts);
+  }
+  syncPairTimer();
+}
+
+let pairTimer = null;
+function syncPairTimer() {
+  if (pairTimer || !document.querySelector("#config-pairing .countdown")) return;
+  pairTimer = setInterval(() => {
+    const node = document.querySelector("#config-pairing .countdown");
+    const live = node && !document.getElementById("view-config").hidden;
+    if (live) {
+      node.textContent = fmt.countdown(node.dataset.expires);
+      node.classList.toggle("urgent", node.textContent !== "expired" && Date.parse(node.dataset.expires) - Date.now() < 60000);
+    }
+    if (!live || node.textContent === "expired") {
+      clearInterval(pairTimer);
+      pairTimer = null;
+    }
+  }, 1000);
+}
+
+function renderConfigStorage() {
+  const box = document.getElementById("config-storage");
+  const admin = adminState();
+  if (admin.storage === null) loadStorage(box);
+  const plan = admin.plan;
+  if (!stale(box, JSON.stringify([admin.storage, plan?.plan_id, plan?.applied_at]))) return;
+  const days = box.querySelector("[name=older_than_days]")?.value || "30";
+  const parts = [];
+  if (admin.storage) {
+    const report = admin.storage;
+    const kv = el("dl", { class: "kv" });
+    const fact = (name, value) => kv.append(el("dt", { text: name }), el("dd", { class: "mono", text: value }));
+    fact("database", fmt.bytes(report.database_bytes));
+    fact("run state", fmt.bytes(report.run_bytes));
+    fact("artifacts", fmt.bytes(report.artifact_bytes));
+    fact("worktrees", fmt.bytes(report.worktree_bytes));
+    fact("runs", `${fmt.count(report.runs)} · ${fmt.count(report.pinned_runs)} pinned`);
+    fact("retention", report.retention);
+    parts.push(kv);
+  } else {
+    parts.push(el("p", { class: "view-state", text: "Loading storage report…" }));
+  }
+  parts.push(el("form", { class: "admin-form", dataset: { form: "storage-plan" } },
+    el("label", null, "Prune finished, unpinned runs older than (days)", el("input", { name: "older_than_days", type: "number", min: "0", value: days, required: "" })),
+    el("button", { type: "submit", class: "btn", text: "Plan prune" }),
+    el("p", { class: "form-error", hidden: "" })));
+  if (plan) parts.push(buildPlan(plan));
+  box.replaceChildren(...parts);
+}
+
+function loadStorage(box) {
+  const admin = adminState();
+  if (admin.storageLoading) return;
+  admin.storageLoading = true;
+  api.get("/api/storage").then((report) => {
+    admin.storage = report;
+    markDirty("config");
+  }).catch((error) => formError(box, error.message)).finally(() => { admin.storageLoading = false; });
+}
+
+function buildPlan(plan) {
+  const applied = Boolean(plan.applied_at);
+  const items = applied ? plan.result.moved : plan.items;
+  const totals = planTotals(items);
+  const facts = el("dl", { class: "kv" });
+  const fact = (name, value) => facts.append(el("dt", { text: name }), el("dd", { class: "mono", text: value }));
+  fact("plan", plan.plan_id);
+  fact("cutoff", `finished before ${plan.criteria.cutoff} (${plan.criteria.older_than_days} days)`);
+  fact(applied ? "moved" : "items", `${fmt.count(totals.count)} · ${fmt.bytes(totals.bytes)}`);
+  if (applied) {
+    fact("applied", `${plan.applied_at} by ${plan.applied_by}`);
+    fact("trash", plan.result.trash);
+  }
+  const table = items.length ? el("table", { class: "plain" },
+    el("thead", null, el("tr", null, ...["Kind", "Run", applied ? "Recoverable at" : "Path", "Size"].map((h) => el("th", { text: h })))),
+    el("tbody", null, ...items.map((item) => el("tr", null,
+      el("td", { text: item.kind }),
+      el("td", { class: "mono", text: String(item.run_id) }),
+      el("td", { class: "mono", text: applied ? item.recoverable_at : item.path }),
+      el("td", { text: fmt.bytes(item.size_bytes) })))))
+    : el("p", { class: "muted", text: applied ? "Nothing was moved." : "Nothing to prune: no unpinned finished run is older than the cutoff." });
+  const action = !applied && items.length ? el("p", null, el("button", { type: "button", class: "btn btn-danger", dataset: { action: "storage-apply" }, text: "Apply this plan" })) : null;
+  return el("div", { class: "evidence-block plan" },
+    el("h2", { text: applied ? "Applied prune plan" : "Prune plan (dry run)" }),
+    facts, table, action, el("p", { class: "form-error", hidden: "" }));
+}
+
+function renderConfigAudit() {
+  const box = document.getElementById("config-audit");
+  const admin = adminState();
+  for (const name of ["controls", "callbacks"]) if (!admin[name].loaded) loadFeed(name);
+  if (!stale(box, ["controls", "callbacks"].map((name) => `${admin[name].loaded}:${admin[name].rows.length}`).join())) return;
+  box.replaceChildren(buildFeed("controls", admin.controls), buildFeed("callbacks", admin.callbacks), el("p", { class: "form-error", hidden: "" }));
+}
+
+function loadFeed(name, button) {
+  const feed = adminState()[name];
+  return act(`audit:${name}`, button, async () => {
+    try {
+      const page = await api.get(`/api/${name}?after=${feed.after}`);
+      if (feed.loaded && !page.length) toast(`No newer ${name}`);
+      feed.loaded = true;
+      feed.rows.push(...page);
+      if (page.length) feed.after = page[page.length - 1].id;
+      markDirty("config");
+    } catch (error) {
+      formError(document.getElementById("config-audit"), error.message);
+    }
+  });
+}
+
+function buildFeed(name, feed) {
+  const filter = el("input", { type: "search", placeholder: "Filter", value: feed.filter, "aria-label": `Filter ${name}` });
+  const rows = feed.rows.map((row) => el("tr", null,
+    el("td", { title: row.created_at, text: fmt.rel(row.created_at) }),
+    el("td", { class: "mono", text: row.actor }),
+    el("td", { class: "mono", text: row.action }),
+    el("td", { class: "mono", text: [row.target_type, row.target_id].filter(Boolean).join(" ") }),
+    el("td", { text: row.outcome }),
+    el("td", null, row.detail ? el("details", null, el("summary", { class: "muted", text: "detail" }), boundedPre(row.detail)) : null)));
+  const apply = () => {
+    feed.filter = filter.value;
+    const needle = filter.value.trim().toLowerCase();
+    for (const row of rows) row.hidden = Boolean(needle) && !row.textContent.toLowerCase().includes(needle);
+  };
+  filter.addEventListener("input", apply);
+  apply();
+  let body;
+  if (!feed.loaded) body = el("p", { class: "view-state", text: `Loading ${name}…` });
+  else if (!rows.length) body = el("p", { class: "muted", text: `No ${name} recorded.` });
+  else body = el("table", { class: "plain" }, el("thead", null, el("tr", null, ...["When", "Actor", "Action", "Target", "Outcome", ""].map((h) => el("th", { text: h })))), el("tbody", null, rows));
+  return el("div", { class: "audit-feed" },
+    el("div", { class: "audit-tools" }, el("h3", { text: name }), filter, el("button", { type: "button", class: "btn", dataset: { action: "audit-more", feed: name }, text: "Load more" })),
+    body);
+}
+
+Object.assign(ACTIONS, {
+  "pair-create": (button) => act("pair-create", button, async () => {
+    const box = document.getElementById("config-pairing");
+    try {
+      adminState().pairing = await api.post("/api/auth/pair", {});
+      formError(box, "");
+      markDirty("config");
+    } catch (error) {
+      formError(box, error.message);
+    }
+  }),
+  "storage-apply": async (button) => {
+    const admin = adminState();
+    const plan = admin.plan;
+    if (!plan || plan.applied_at) return;
+    const totals = planTotals(plan.items);
+    const sure = await confirmDialog({
+      title: "Apply this prune plan?",
+      body: `${fmt.count(totals.count)} items (${fmt.bytes(totals.bytes)}) move to the trash directory and their artifacts are marked pruned. Recover them from the trash by hand if needed.`,
+      confirmLabel: `Move ${fmt.count(totals.count)} items to trash`,
+      danger: true,
+    });
+    if (!sure) return;
+    await act("storage-apply", button, async () => {
+      try {
+        admin.plan = await api.post(`/api/storage/plans/${plan.plan_id}/apply`, {});
+        admin.storage = null;
+        toast(`Moved ${fmt.count(admin.plan.result.moved.length)} items to the trash`);
+        markDirty("config");
+      } catch (error) {
+        formError(document.querySelector("#config-storage .plan"), error.message);
+      }
+    });
+  },
+  "audit-more": (button) => loadFeed(button.dataset.feed, button),
+});
+
+Object.assign(FORMS, {
+  "storage-plan": (form) => act("storage-plan", form.querySelector("button[type=submit]"), async () => {
+    try {
+      adminState().plan = await api.post("/api/storage/plans", { older_than_days: Number(form.elements.older_than_days.value) });
+      formError(form, "");
+      markDirty("config");
+    } catch (error) {
+      formError(form, error.message);
+    }
+  }),
+});
 // --- end slice3-admin ---
 
 // --- router ---
@@ -2140,11 +2614,19 @@ function parseHash() {
   }
   if (segments[0] === "attention") return { view: "attention", runId: null, section: null };
   if (segments[0] === "config") return { view: "config", runId: null, section: null };
+  if (segments[0] === "pair" && segments[1]) return { view: "pair", runId: null, section: null, code: segments[1] };
   return { view: "fleet", runId: null, section: null };
 }
 
 function applyRoute() {
   const route = parseHash();
+  if (route.view === "pair") {
+    // A scanned pairing link: prefill the code, then continue to Config. The
+    // pairing screen shows itself while the browser is unpaired.
+    if (store.auth !== "ok") document.querySelector("form[data-form=pair] input[name=code]").value = route.code;
+    location.hash = "#/config";
+    return;
+  }
   const previous = store.route;
   store.route = route;
   if (route.view === "run" && route.runId !== store.detail.id) {

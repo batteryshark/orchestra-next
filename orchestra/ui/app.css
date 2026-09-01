@@ -378,6 +378,19 @@
   /* end slice2-config */
 
   /* slice3-admin */
+  .pair-box { display: flex; gap: var(--sp-5); align-items: center; flex-wrap: wrap; margin-top: var(--sp-4); }
+  .pair-code { font-family: var(--font-mono); font-size: 2em; letter-spacing: 0.06em; }
+  .qr { width: 11em; height: 11em; display: block; }
+  .qr-ground { fill: #fff; } /* scanner contrast: the QR stays black on white in both schemes */
+  .qr-ink { fill: #000; }
+  .admin-form { display: flex; gap: var(--sp-3); align-items: end; flex-wrap: wrap; margin: var(--sp-4) 0; }
+  .admin-form label { margin: 0; }
+  .admin-form input { width: 7em; }
+  .admin-form .form-error { flex-basis: 100%; margin: 0; }
+  .audit-feed { margin-bottom: var(--sp-5); }
+  .audit-feed .audit-tools { display: flex; gap: var(--sp-3); align-items: center; margin-bottom: var(--sp-3); }
+  .audit-feed h3 { font-size: var(--fs-m); margin: 0; text-transform: capitalize; }
+  .audit-feed pre { background: var(--soft); border-radius: var(--radius-s); padding: var(--sp-2) var(--sp-3); font-size: var(--fs-xs); }
   /* end slice3-admin */
 
   @media (max-width: 719px) {
