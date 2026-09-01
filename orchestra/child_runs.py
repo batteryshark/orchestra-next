@@ -11,6 +11,18 @@ class DelegationError(ValueError):
     pass
 
 
+_MODES = ("read-only", "workspace-write", "danger-full-access")
+
+
+def _cap(requested, inherited, limit):
+    """None inherits; a non-integer falls through so RunRequest rejects it as before."""
+    if requested is None:
+        return inherited
+    if limit is None or not isinstance(requested, int):
+        return requested
+    return min(requested, limit)
+
+
 def create(con, parent_run_id: int, value: dict, *, actor="run"):
     parent = runs.find(con, parent_run_id)
     if parent is None or parent["status"] in db.RUN_TERMINAL:
@@ -23,21 +35,26 @@ def create(con, parent_run_id: int, value: dict, *, actor="run"):
     if profile is None or not child_tier_allowed(int(parent_profile["tier"]), int(profile["tier"]), parent["max_child_tier"]):
         raise DelegationError("child profile exceeds the delegated tier")
     group = con.execute("SELECT slug FROM run_groups WHERE group_id=?", (parent["group_id"],)).fetchone()
+    # The body is agent-controlled: a child never exceeds its parent's privilege.
+    mode = value.get("permission_mode", parent["permission_mode"])
+    if mode in _MODES and _MODES.index(mode) > _MODES.index(parent["permission_mode"]):
+        mode = parent["permission_mode"]
+    ceiling = parent["max_child_tier"] or int(parent_profile["tier"])
     request_value = {
         "request_id": value.get("request_id"),
         "profile": value.get("profile"),
         "objective": value.get("objective"),
         "group": group["slug"],
         "strategy": value.get("strategy", "goal"),
-        "permission_mode": value.get("permission_mode", parent["permission_mode"]),
+        "permission_mode": mode,
         "title": value.get("title"),
         "cwd": parent["cwd"],
         "ref": parent["branch"],
         "requested_by": actor,
         "limits": value.get("limits", {}),
-        "verify": value.get("verify"),
-        "max_children": value.get("max_children"),
-        "max_child_tier": value.get("max_child_tier"),
+        "verify": json.loads(parent["verify_json"]) if parent["verify_json"] else None,
+        "max_children": _cap(value.get("max_children"), parent["max_children"], parent["max_children"]),
+        "max_child_tier": _cap(value.get("max_child_tier"), parent["max_child_tier"], ceiling),
     }
     request = RunRequest.from_mapping(request_value)
     child, _ = runs.submit(con, request, parent_run_id=parent_run_id)

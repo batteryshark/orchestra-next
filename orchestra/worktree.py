@@ -179,7 +179,8 @@ def create(root: Path, run_id: int, group_slug: str,
         suffix += 1
         branch = f"orchestra-next/run-{run_id}-{suffix}"
         wt = paths.worktrees_dir(group_slug) / f"run-{run_id}-{suffix}"
-    cmd = ["git", "-C", str(root), "worktree", "add", "-b", branch, str(wt)]
+    # "--" keeps a start point such as "--lock" from being parsed as an option.
+    cmd = ["git", "-C", str(root), "worktree", "add", "-b", branch, "--", str(wt)]
     if start_point:
         cmd.append(start_point)
     res = subprocess.run(cmd, capture_output=True, text=True)
