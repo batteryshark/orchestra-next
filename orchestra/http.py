@@ -149,7 +149,9 @@ class Handler(BaseHTTPRequestHandler):
         con = db.connect()
         try:
             identity = auth.identify(con, token)
-            if identity is None and peer_trusted:
+            # Trust vouches only for callers that present no credential; a revoked or
+            # bogus bearer from a trusted peer is a 401, never a silent promotion.
+            if identity is None and token is None and peer_trusted:
                 identity = auth.network_identity(self.client_address[0])
             result = api.API(con).handle(self.command, parsed.path, query, body, identity)
             if isinstance(result, api.FileResponse):

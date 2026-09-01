@@ -17,6 +17,7 @@ DEFAULTS = {
     "trust_loopback": False,
     "trusted_cidrs": [],
     "allowed_hosts": [],
+    "worker_env": [],
 }
 
 
@@ -52,6 +53,9 @@ def _validate(value) -> dict:
     hosts = result["allowed_hosts"]
     if not isinstance(hosts, list) or any(not isinstance(item, str) or not item.strip() for item in hosts):
         raise ConfigError("allowed_hosts must be a list of host names")
+    names = result["worker_env"]
+    if not isinstance(names, list) or any(not isinstance(item, str) or not item.strip() for item in names):
+        raise ConfigError("worker_env must be a list of environment variable names or PREFIX_* patterns")
     return result
 
 

@@ -4,7 +4,7 @@ import json
 import threading
 import unittest
 
-from orchestra import artifacts, auth, config, http as transport, paths
+from orchestra import artifacts, auth, config, http as transport, paths, dsh
 from tests.common import StateCase
 
 
@@ -215,11 +215,11 @@ class TrustedNetworkTests(UiTransportCase):
         response, _ = self.request("GET", "/api/health", headers={"Host": "evil.example:8766"})
         self.assertEqual(response.status, 400)
 
-    def test_invalid_bearer_from_trusted_peer_still_operates(self):
-        response, value = self.request("GET", "/api/auth/me",
-                                       headers={"Authorization": "Bearer od_bogus"})
-        self.assertEqual(response.status, 200)
-        self.assertEqual(value["data"]["kind"], "network")
+    def test_invalid_bearer_from_trusted_peer_is_refused(self):
+        response, value = self.request("GET", "/api/runs", headers={"Authorization": "Bearer od_bogus"})
+        self.assertEqual(response.status, 401)
+        response, value = self.request("GET", "/api/auth/me")
+        self.assertEqual(value["data"]["kind"], "network", "no credential at all still relies on the trusted network")
 
 
 class TrustConfigTests(StateCase):
@@ -230,6 +230,17 @@ class TrustConfigTests(StateCase):
             config._validate({"trust_tailnet": "yes"})
         value = config._validate({"trust_tailnet": True, "trust_loopback": True})
         self.assertTrue(value["trust_tailnet"])
+        with self.assertRaises(config.ConfigError):
+            config._validate({"worker_env": "PATH"})
+
+    def test_worker_env_allowlist_is_opt_in(self):
+        base = {"PATH": "/bin", "HOME": "/h", "DEEPSEEK_API_KEY": "k", "AWS_SECRET_ACCESS_KEY": "s",
+                "ORCHESTRA_NEXT_URL": "u", "DSH_HOME": "d", "ORCHESTRA_NEXT_TOKEN": "leak"}
+        everything = dsh.worker_env(base, allow=[])
+        self.assertIn("AWS_SECRET_ACCESS_KEY", everything)
+        self.assertNotIn("ORCHESTRA_NEXT_TOKEN", everything)
+        restricted = dsh.worker_env(base, allow=["DEEPSEEK_*"])
+        self.assertEqual(set(restricted), {"PATH", "HOME", "DEEPSEEK_API_KEY", "ORCHESTRA_NEXT_URL", "DSH_HOME"})
 
     def test_tailnet_flag_trusts_cgnat_range(self):
         config.write({"trust_tailnet": True}, paths.bootstrap_path())

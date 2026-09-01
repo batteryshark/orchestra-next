@@ -63,7 +63,7 @@ def _verify(run, workdir_path: Path) -> tuple[bool, str]:
     try:
         result = subprocess.run(value["argv"], cwd=workdir_path, capture_output=True,
                                 text=True, encoding="utf-8", errors="replace",
-                                timeout=value["timeout_seconds"], shell=False)
+                                timeout=value["timeout_seconds"], shell=False, env=dsh.worker_env())
         output = ((result.stdout or "") + (result.stderr or ""))[-MAX_VERIFY_OUTPUT:]
         return result.returncode == 0, f"exit={result.returncode}\n{output}"
     except subprocess.TimeoutExpired as exc:

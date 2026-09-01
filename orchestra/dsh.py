@@ -122,14 +122,35 @@ def write_auth_file(run_id: int, token: str) -> Path:
     return target
 
 
+WORKER_ENV_ALWAYS = ("ORCHESTRA_NEXT_*", "DSH_*", "PATH", "HOME", "TMPDIR", "LANG", "LC_*", "TZ", "TERM")
+
+
+def worker_env(base=None, allow=None) -> dict[str, str]:
+    """Environment for DSH workers and verifiers.
+
+    An empty ``worker_env`` bootstrap list keeps the daemon's whole environment
+    (the historical behaviour); a non-empty list restricts it to those names or
+    ``PREFIX_*`` patterns plus the variables DSH itself needs.
+    """
+    from orchestra import config
+    base = dict(os.environ if base is None else base)
+    base.pop("ORCHESTRA_NEXT_TOKEN", None)
+    allow = config.read()["worker_env"] if allow is None else list(allow)
+    if not allow:
+        return base
+    patterns = [*WORKER_ENV_ALWAYS, *allow]
+    def allowed(name: str) -> bool:
+        return any(name == item or (item.endswith("*") and name.startswith(item[:-1])) for item in patterns)
+    return {name: value for name, value in base.items() if allowed(name)}
+
+
 def launch(run: dict, token: str, provider_env: dict[str, str] | None = None) -> tuple[list[str], dict[str, str]]:
     """Return the only DSH argv/env. The bearer exists only in a 0600 file."""
     require_version()
     check_profile(require_binary=False)
     run_id = int(run["id"])
     auth_file = write_auth_file(run_id, token)
-    env = dict(os.environ)
-    env.pop("ORCHESTRA_NEXT_TOKEN", None)
+    env = worker_env()
     env.update({
         "ORCHESTRA_NEXT_DSH_SESSION_ROOT": str(paths.run_session_dir(run_id)),
         "ORCHESTRA_NEXT_RUN_AUTH_FILE": str(auth_file),
