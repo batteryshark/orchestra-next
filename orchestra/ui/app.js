@@ -154,6 +154,22 @@ function filterRuns(runs, filters) {
   });
 }
 
+// DSH journal messages carry typed parts: reasoning, text, tool-call, tool-result.
+function messageParts(payload) {
+  const content = payload?.message?.content ?? payload?.content;
+  const parts = { reasoning: [], text: [] };
+  if (typeof content === "string") parts.text.push(content);
+  else if (Array.isArray(content)) {
+    for (const part of content) {
+      if (!part) continue;
+      if (typeof part === "string") parts.text.push(part);
+      else if (part.type === "reasoning" && part.text) parts.reasoning.push(part.text);
+      else if (part.type === "text" && part.text) parts.text.push(part.text);
+    }
+  }
+  return parts;
+}
+
 function extractText(payload) {
   if (payload == null) return "";
   if (typeof payload === "string") return payload;
@@ -1247,9 +1263,13 @@ function threadEntryKind(entry) {
   if (type === "acp.tool_call_update") return "tool-update";
   if (type.startsWith("dsh.goal")) return "goal";
   if (type.includes("compact")) return "compaction";
-  if (type.startsWith("dsh.") && /thought|think|reason/.test(type)) return "thinking";
-  const text = extractText(entry.item.payload);
-  if (type.startsWith("dsh.") && text) return "text";
+  if (type === "dsh.user/message") return "prompt";
+  if (type === "dsh.assistant/message") {
+    const parts = messageParts(entry.item.payload);
+    return parts.reasoning.length || parts.text.length ? "assistant" : "machine";
+  }
+  // Stream fragments (dsh.assistant/chunk, acp.agent_thought_chunk) repeat what the
+  // finished assistant message carries, so they stay behind the machine toggle.
   return "machine";
 }
 
@@ -1317,9 +1337,15 @@ function buildThreadRow(entry, toolIndex) {
   if (kind === "compaction") {
     return el("div", { class: "feed-item marker", text: `🗜 context compacted · ${fmt.rel(at)}` });
   }
-  if (kind === "thinking") {
-    return el("div", { class: "feed-item thinking" }, head(`💭 ${entry.item.type}`),
-      el("div", { class: "item-body" }, boundedPre(extractText(entry.item.payload))));
+  if (kind === "assistant") {
+    const parts = messageParts(entry.item.payload);
+    const body = el("div", { class: "item-body" });
+    if (parts.reasoning.length) body.append(el("div", { class: "thinking" }, el("span", { class: "thinking-label", text: "💭 " }), boundedPre(parts.reasoning.join("\n\n"))));
+    if (parts.text.length) body.append(boundedPre(parts.text.join("\n\n")));
+    return el("div", { class: "feed-item assistant" }, head(parts.text.length ? "💬 assistant" : "💭 assistant"), body);
+  }
+  if (kind === "prompt") {
+    return el("div", { class: "feed-item prompt" }, head("🧑 prompt"), el("div", { class: "item-body" }, boundedPre(extractText(entry.item.payload))));
   }
   if (kind === "tool") {
     const payload = entry.item.payload || {};
@@ -1330,9 +1356,6 @@ function buildThreadRow(entry, toolIndex) {
     const row = el("div", { class: "feed-item tool", dataset: { tool: id } }, head(entry.item.type), details);
     toolIndex.set(id, row);
     return row;
-  }
-  if (kind === "text") {
-    return el("div", { class: "feed-item" }, head(`💬 ${entry.item.type}`), el("div", { class: "item-body" }, boundedPre(extractText(entry.item.payload))));
   }
   const event = entry.item;
   return finish(el("div", { class: "feed-item" }, head(`🛠 ${event.type}`),

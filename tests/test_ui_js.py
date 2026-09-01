@@ -127,6 +127,15 @@ class UiLogicTests(unittest.TestCase):
         value = self.evaluate(f"runSignature({json.dumps(base)}) === runSignature({json.dumps(changed)})")
         self.assertFalse(value)
 
+    def test_message_parts_split_reasoning_from_text(self):
+        payload = {"message": {"role": "assistant", "content": [
+            {"type": "reasoning", "text": "think"}, {"type": "tool-call", "id": "c1", "name": "read"},
+            {"type": "text", "text": "answer"}]}}
+        value = self.evaluate(f"messageParts({json.dumps(payload)})")
+        self.assertEqual(value, {"reasoning": ["think"], "text": ["answer"]})
+        only_tools = self.evaluate("messageParts({message: {content: [{type: 'tool-call'}]}})")
+        self.assertEqual(only_tools, {"reasoning": [], "text": []})
+
     def test_extract_text_handles_content_shapes(self):
         value = self.evaluate("""({
           plain: extractText("hello"),
