@@ -338,6 +338,9 @@
   .att-item .att-head { display: flex; gap: var(--sp-3); align-items: baseline; flex-wrap: wrap; }
   .att-item .att-meta { color: var(--muted); font-size: var(--fs-xs); }
   .att-item .att-run-context { margin: var(--sp-2) 0 0; color: var(--muted); font-size: var(--fs-s); }
+  .att-item .att-leadup { margin: var(--sp-2) 0 0; color: var(--muted); font-size: var(--fs-s); }
+  .att-item .att-leadup ul { margin: var(--sp-1) 0 0; padding-left: var(--sp-5); }
+  .att-item .att-leadup li { overflow-wrap: anywhere; }
   .att-item .att-prompt { margin: var(--sp-3) 0; overflow-wrap: anywhere; }
   .att-item .att-context { background: var(--soft); border-radius: var(--radius-s); padding: var(--sp-3); font-size: var(--fs-s); }
   .att-item .att-options { display: flex; gap: var(--sp-2); flex-wrap: wrap; margin: var(--sp-3) 0; }
