@@ -148,6 +148,36 @@
 </dialog>
 
 <!-- slice2-routing dialogs -->
+<dialog id="reroute" class="direct-dialog">
+  <form data-form="reroute">
+    <h2 id="reroute-title">Reroute this run</h2>
+    <p class="muted">The run continues the same goal on the new route; its cache epoch increments.</p>
+    <label>Route <select name="route" required></select></label>
+    <label>Effort <select name="effort"><option value="">default</option></select></label>
+    <label>Direction (optional)
+      <textarea name="message" rows="3" placeholder="Sent with the reroute; blank uses the default continuation prompt"></textarea>
+    </label>
+    <p class="form-error" hidden></p>
+    <div class="dialog-buttons">
+      <button type="button" class="btn" data-action="reroute-catalog" hidden>Retry catalog</button>
+      <button type="button" class="btn" data-action="reroute-cancel">Cancel</button>
+      <button type="submit" class="btn btn-primary">Reroute</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="continue" class="direct-dialog">
+  <form data-form="continue">
+    <h2 id="continue-title">Continue this run</h2>
+    <p id="continue-body" class="muted"></p>
+    <textarea name="direction" rows="3" required placeholder="Direction appended to the original request ( Cmd+Enter starts )" aria-label="Direction"></textarea>
+    <p class="form-error" hidden></p>
+    <div class="dialog-buttons">
+      <button type="button" class="btn" data-action="continue-cancel">Cancel</button>
+      <button type="submit" class="btn btn-primary">Start continuation</button>
+    </div>
+  </form>
+</dialog>
 <!-- end slice2-routing dialogs -->
 
 <!-- slice2-evidence dialogs -->

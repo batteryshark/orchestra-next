@@ -348,6 +348,11 @@
   .evidence-block pre { background: var(--soft); border-radius: var(--radius-s); padding: var(--sp-3); font-size: var(--fs-xs); overflow-x: auto; }
 
   /* slice2-routing */
+  .direct-dialog .muted { margin: var(--sp-2) 0 0; font-size: var(--fs-s); }
+  .merge-result { border-left: 3px solid var(--line-strong); }
+  .merge-result.good { border-left-color: var(--good); }
+  .merge-result.bad { border-left-color: var(--bad); }
+  .merge-result h2 { margin-top: 0; }
   /* end slice2-routing */
 
   /* slice2-evidence */
