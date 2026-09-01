@@ -255,7 +255,11 @@ class API:
                 return Response(200, envelope(self.con, {"status": status, "diff": diff[:200_000]}))
             if suffix == ["merge"] and method == "POST":
                 _operator(identity)
-                result = worktree.merge_into_owner(Path(run["cwd"]), run["branch"])
+                try:
+                    result = worktree.merge_into_owner(Path(run["cwd"]), run["branch"])
+                except RuntimeError as exc:
+                    db.record_control(self.con, actor=_actor(identity), action="run.merge", outcome="refused", target_type="run", target_id=run_id, detail={"error": str(exc)}); self.con.commit()
+                    raise Problem(409, str(exc)) from exc
                 db.record_control(self.con, actor=_actor(identity), action="run.merge", outcome="ok", target_type="run", target_id=run_id, detail=result); self.con.commit()
                 return Response(200, envelope(self.con, result))
             if suffix == ["pin"] and method == "POST":
@@ -276,10 +280,13 @@ class API:
             data = _body(body).copy()
             try:
                 revision = int(data.pop("expected_revision"))
+            except (KeyError, TypeError, ValueError) as exc:
+                raise Problem(400, "expected_revision is required") from exc
+            try:
                 row = profiles.update(self.con, parts[1], expected_revision=revision,
                                       actor=_actor(identity), **data)
-            except (KeyError, TypeError, ValueError) as exc:
-                raise Problem(400, "expected_revision and valid profile fields are required") from exc
+            except (TypeError, ValueError) as exc:
+                raise Problem(400, str(exc) or "invalid profile fields") from exc
             except RuntimeError as exc:
                 raise Problem(409, str(exc)) from exc
             return Response(200, envelope(self.con, profiles.payload(row)))

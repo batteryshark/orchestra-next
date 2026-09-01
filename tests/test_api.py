@@ -195,6 +195,26 @@ class ConsoleApiTests(StateCase):
         listed = self.call("GET", "/api/runs", query={"status": "waiting"}).data["data"]
         self.assertTrue(listed[0]["paused"])
 
+    def test_merge_refusal_is_a_409_with_the_reason(self):
+        self.create_profile()
+        run = self.submit("unmerged")
+        with self.assertRaises(api.Problem) as problem:
+            self.call("POST", f"/api/runs/{run['id']}/merge", {})
+        self.assertEqual(problem.exception.status, 409)
+        self.assertIn("branch", str(problem.exception))
+        refused = self.con.execute("SELECT outcome FROM control_events WHERE action='run.merge'").fetchone()
+        self.assertEqual(refused["outcome"], "refused")
+
+    def test_profile_patch_reports_the_validation_detail(self):
+        self.create_profile()
+        with self.assertRaises(api.Problem) as problem:
+            self.call("PATCH", "/api/profiles/fake", {"expected_revision": 1, "effort": "bogus"})
+        self.assertEqual(problem.exception.status, 400)
+        self.assertIn("bogus", str(problem.exception))
+        with self.assertRaises(api.Problem) as problem:
+            self.call("PATCH", "/api/profiles/fake", {"note": "no revision"})
+        self.assertIn("expected_revision", str(problem.exception))
+
     def test_readiness_reports_dsh_and_claude_state(self):
         value = self.call("GET", "/api/readiness").data["data"]
         self.assertEqual(value["schema"], db.SCHEMA_VERSION)
