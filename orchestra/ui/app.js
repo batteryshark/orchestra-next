@@ -1411,6 +1411,21 @@ function syncCountdownTimer() {
 }
 
 function renderConfig() {
+  renderConfigProfiles();
+  renderConfigGroups();
+  renderConfigIdentities();
+  renderConfigPairing();
+  renderConfigStorage();
+  renderConfigAudit();
+  renderConfigDiagnostics();
+}
+
+function renderConfigIdentities() {}
+function renderConfigPairing() {}
+function renderConfigStorage() {}
+function renderConfigAudit() {}
+
+function renderConfigProfiles() {
   const profiles = document.getElementById("config-profiles");
   const profileTable = el("table", { class: "plain" },
     el("thead", null, el("tr", null, ...["Name", "Slug", "Route", "Tier", "Concurrency", "State", "Rev"].map((h) => el("th", { text: h })))),
@@ -1423,7 +1438,9 @@ function renderConfig() {
       el("td", { text: profile.archived ? "archived" : profile.enabled === false ? "disabled" : "enabled" }),
       el("td", { text: String(profile.revision) })))));
   profiles.replaceChildren(store.profiles.length ? profileTable : el("p", { class: "view-state", text: "No profiles. Create one with the CLI: orchestra-next profile-create." }));
+}
 
+function renderConfigGroups() {
   const groupsBox = document.getElementById("config-groups");
   const groupTable = el("table", { class: "plain" },
     el("thead", null, el("tr", null, ...["Name", "Slug", "Default cwd", "Concurrency", "State", "Rev"].map((h) => el("th", { text: h })))),
@@ -1435,7 +1452,9 @@ function renderConfig() {
       el("td", { text: group.archived ? "archived" : "active" }),
       el("td", { text: String(group.revision) })))));
   groupsBox.replaceChildren(groupTable);
+}
 
+function renderConfigDiagnostics() {
   const diagnostics = document.getElementById("config-diagnostics");
   const kv = el("dl", { class: "kv" });
   const fact = (name, value) => kv.append(el("dt", { text: name }), el("dd", { class: "mono", text: String(value ?? "") }));
@@ -1481,6 +1500,20 @@ function render() {
   if (marks.has("auth")) markDirty(store.route.view === "run" ? "run" : store.route.view);
 }
 // --- end views ---
+
+// Feature blocks below extend ACTIONS/FORMS with Object.assign and add their
+// own render functions. Each block is owned by one feature; keep them apart.
+// --- slice2-routing ---
+// --- end slice2-routing ---
+
+// --- slice2-evidence ---
+// --- end slice2-evidence ---
+
+// --- slice2-config ---
+// --- end slice2-config ---
+
+// --- slice3-admin ---
+// --- end slice3-admin ---
 
 // --- router ---
 function parseHash() {

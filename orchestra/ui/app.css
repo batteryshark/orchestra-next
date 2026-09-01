@@ -347,6 +347,18 @@
   .evidence-block { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-m); padding: var(--sp-4); margin-bottom: var(--sp-4); }
   .evidence-block pre { background: var(--soft); border-radius: var(--radius-s); padding: var(--sp-3); font-size: var(--fs-xs); overflow-x: auto; }
 
+  /* slice2-routing */
+  /* end slice2-routing */
+
+  /* slice2-evidence */
+  /* end slice2-evidence */
+
+  /* slice2-config */
+  /* end slice2-config */
+
+  /* slice3-admin */
+  /* end slice3-admin */
+
   @media (max-width: 719px) {
     main { padding: var(--sp-3); }
     .grid2 { grid-template-columns: 1fr; }
