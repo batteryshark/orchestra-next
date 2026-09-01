@@ -923,10 +923,15 @@ function updateRowClasses(row, run) {
 }
 
 const RUN_ACTION_MATRIX = {
-  queued: ["direct", "stop"],
-  starting: ["direct", "pause", "stop"],
-  running: ["direct", "pause", "stop"],
-  waiting: ["direct", "resume", "stop"],
+  queued: ["direct", "reroute", "stop"],
+  starting: ["direct", "pause", "reroute", "stop"],
+  running: ["direct", "pause", "reroute", "stop"],
+  waiting: ["direct", "resume", "reroute", "stop"],
+  completed: ["retry", "continue", "merge"],
+  failed: ["retry", "continue", "merge"],
+  timed_out: ["retry", "continue", "merge"],
+  stopped: ["retry", "continue", "merge"],
+  skipped: ["retry", "continue", "merge"],
 };
 
 function renderRunHeader(run) {
@@ -953,7 +958,11 @@ function renderRunHeader(run) {
   if (allowed.includes("resume")) actions.push(el("button", { class: "btn btn-primary", dataset: { action: "run-resume" }, text: "Resume" }));
   if (allowed.includes("direct")) actions.push(el("button", { class: "btn", dataset: { action: "run-direct" }, title: "Tell or interrupt the run ( t )", text: "Direct…" }));
   if (allowed.includes("pause")) actions.push(el("button", { class: "btn", dataset: { action: "run-pause" }, title: "Park at the next safe boundary; Resume continues the same session", text: "Pause" }));
+  if (allowed.includes("reroute")) actions.push(el("button", { class: "btn", dataset: { action: "run-reroute" }, title: "Continue the same goal on another provider/model", text: "Reroute…" }));
   if (allowed.includes("stop")) actions.push(el("button", { class: "btn btn-danger", dataset: { action: "run-stop" }, text: "Stop" }));
+  if (allowed.includes("retry")) actions.push(el("button", { class: "btn btn-primary", dataset: { action: "run-retry" }, title: "Start a new run from the same request", text: "Retry" }));
+  if (allowed.includes("continue")) actions.push(el("button", { class: "btn", dataset: { action: "run-continue" }, title: "Start a new run from the same request plus a direction", text: "Continue…" }));
+  if (allowed.includes("merge") && run.branch) actions.push(el("button", { class: "btn", dataset: { action: "run-merge" }, title: "Merge the run branch into the owner checkout", text: "Merge…" }));
   if (run.status === "waiting" && ["attention", "permission", "verification"].includes(run.waiting_kind)) {
     actions.push(el("a", { class: "btn", href: "#/attention", text: "Answer →" }));
   }
@@ -1201,6 +1210,7 @@ function renderChanges() {
   fact("head", run.end_ref);
   if (run.git?.diff_stat) fact("diff stat", run.git.diff_stat);
   blocks.push(el("div", { class: "evidence-block" }, facts));
+  if (detail.mergeResult) blocks.push(mergeResultBlock(detail.mergeResult));
   if (!detail.loaded.changes) {
     blocks.push(el("p", { class: "view-state", text: "Loading changes…" }));
   } else {
@@ -1504,7 +1514,179 @@ function render() {
 // Feature blocks below extend ACTIONS/FORMS with Object.assign and add their
 // own render functions. Each block is owned by one feature; keep them apart.
 // --- slice2-routing ---
+const MODELS_TTL = 5 * 60 * 1000;
+const lineageIds = new Map(); // `${runId}:${kind}` → request_id, kept until the POST succeeds
+
+async function loadModels(refresh) {
+  const cached = store.models;
+  if (!refresh && cached && Date.now() - Date.parse(cached.checked_at) < MODELS_TTL) return cached;
+  store.models = await api.get(refresh ? "/api/models?refresh=1" : "/api/models");
+  return store.models;
+}
+
+function fillEfforts(form, preferred) {
+  const select = form.elements.effort;
+  select.replaceChildren(el("option", { value: "", text: "default" }),
+    ...routeEfforts(store.models?.models, form.elements.route.value).map((effort) => el("option", { value: effort, text: effort })));
+  select.value = preferred || "";
+  if (select.selectedIndex === -1) select.selectedIndex = 0;
+}
+
+async function fillRoutes(form, refresh) {
+  const run = store.detail.run;
+  const retry = form.querySelector("[data-action=reroute-catalog]");
+  formError(form, "");
+  retry.hidden = true;
+  try {
+    const { models } = await loadModels(refresh);
+    const select = form.elements.route;
+    select.replaceChildren(...models.map((item) => el("option", { value: routeKey(item.provider, item.model), text: `${item.provider}/${item.model}` })));
+    select.value = routeKey(run.route_provider, run.route_model);
+    if (select.selectedIndex === -1) select.selectedIndex = 0;
+    fillEfforts(form, run.route_effort);
+  } catch (error) {
+    formError(form, error.message);
+    retry.hidden = false;
+  }
+}
+
+async function spawnLineage(run, kind, extra) {
+  const key = `${run.id}:${kind}`;
+  if (!lineageIds.has(key)) lineageIds.set(key, crypto.randomUUID());
+  const created = await api.post(`/api/runs/${run.id}/${kind}`, { request_id: lineageIds.get(key), ...extra });
+  lineageIds.delete(key);
+  store.snapshotsStale = true;
+  toast(`Run ${runLabel(created)} queued as ${kind === "retry" ? "retry" : "continuation"} of run ${run.id}`);
+  location.hash = `#/runs/${created.id}`;
+}
+
+function mergeResultBlock(result) {
+  const ok = result.merged === true;
+  const block = el("div", { class: `evidence-block merge-result ${ok ? "good" : "bad"}` },
+    el("h2", { text: "Merge" }),
+    el("p", { text: ok ? `Merged ${result.branch} into the owner checkout; HEAD is now ${result.commit}.` : `Not merged (HTTP ${result.status}).` }));
+  if (!ok) block.append(boundedPre(result.error));
+  return block;
+}
+
+Object.assign(ACTIONS, {
+  "run-reroute": (button) => {
+    const run = store.detail.run;
+    if (!run || !ACTIVE_STATUSES.has(run.status)) return;
+    const dialog = document.getElementById("reroute");
+    const form = dialog.querySelector("form");
+    document.getElementById("reroute-title").textContent = `Reroute ${runLabel(run)}`;
+    form.elements.message.value = "";
+    dialog.showModal();
+    return act("reroute-catalog", button, () => fillRoutes(form, false));
+  },
+  "reroute-catalog": (button) => act("reroute-catalog", button, () => fillRoutes(button.form, true)),
+  "reroute-cancel": () => document.getElementById("reroute").close(),
+  "run-retry": async (button) => {
+    const run = store.detail.run;
+    if (!run || ACTIVE_STATUSES.has(run.status)) return;
+    const sure = await confirmDialog({
+      title: `Retry ${runLabel(run)}?`,
+      body: `Creates a new run that retries ${runLabel(run)}; the new run records retry_of = ${run.id}.`,
+      confirmLabel: "Retry",
+    });
+    if (!sure) return;
+    await act(`${run.id}:retry`, button, async () => {
+      try {
+        await spawnLineage(run, "retry", {});
+        actionError("");
+      } catch (error) {
+        actionError(error.message);
+      }
+    });
+  },
+  "run-continue": () => {
+    const run = store.detail.run;
+    if (!run || ACTIVE_STATUSES.has(run.status)) return;
+    const dialog = document.getElementById("continue");
+    document.getElementById("continue-title").textContent = `Continue ${runLabel(run)}`;
+    document.getElementById("continue-body").textContent = `A new run starts from the same request with your direction appended; the new run records continuation_of = ${run.id}.`;
+    dialog.showModal();
+    dialog.querySelector("textarea").focus();
+  },
+  "continue-cancel": () => document.getElementById("continue").close(),
+  "run-merge": async (button) => {
+    const run = store.detail.run;
+    if (!run || ACTIVE_STATUSES.has(run.status) || !run.branch) return;
+    const sure = await confirmDialog({
+      title: `Merge ${run.branch}?`,
+      body: `Merges branch ${run.branch} into the current branch of the owner checkout ${run.cwd}. Merges never happen automatically; a dirty checkout or a conflict is refused and the checkout is left as found.`,
+      confirmLabel: "Merge",
+      danger: true,
+    });
+    if (!sure) return;
+    await act(`${run.id}:merge`, button, async () => {
+      try {
+        store.detail.mergeResult = await api.post(`/api/runs/${run.id}/merge`, {});
+        toast(`Merged ${run.branch}`);
+      } catch (error) {
+        store.detail.mergeResult = { merged: false, status: error.status, error: error.message };
+        toast("Merge refused; see Changes");
+      }
+      schedule(true);
+      if (store.route.section === "changes") markDirty("run");
+      else location.hash = `#/runs/${run.id}/changes`;
+    });
+  },
+});
+
+Object.assign(FORMS, {
+  reroute: (form, event) => {
+    const key = form.elements.route.value;
+    if (!key) return;
+    return act(`${store.detail.id}:reroute`, event?.submitter, async () => {
+      try {
+        await api.post(`/api/runs/${store.detail.id}/reroute`, rerouteBody(key, form.elements.effort.value, form.elements.message.value));
+        formError(form, "");
+        document.getElementById("reroute").close();
+        toast("Reroute queued; the run continues the same goal on the new route and its cache epoch increments");
+        schedule(true);
+      } catch (error) {
+        formError(form, error.message);
+      }
+    });
+  },
+  continue: (form, event) => {
+    const run = store.detail.run;
+    const direction = form.elements.direction.value.trim();
+    if (!run || !direction) return;
+    return act(`${run.id}:continue`, event?.submitter, async () => {
+      try {
+        await spawnLineage(run, "continue", { direction });
+        form.elements.direction.value = "";
+        formError(form, "");
+        document.getElementById("continue").close();
+      } catch (error) {
+        formError(form, error.message);
+      }
+    });
+  },
+});
+
+document.querySelector("#reroute select[name=route]").addEventListener("change", (event) => fillEfforts(event.target.form, store.detail.run?.route_effort));
 // --- end slice2-routing ---
+
+// --- routing-logic ---
+// Option values carry the DSH ACP choice encoding, so "/" inside a model name is safe.
+function routeKey(provider, model) {
+  return JSON.stringify([provider, model]);
+}
+
+function routeEfforts(models, key) {
+  const hit = (models || []).find((item) => routeKey(item.provider, item.model) === key);
+  return hit ? hit.efforts || [] : [];
+}
+
+function rerouteBody(key, effort, message) {
+  const [provider, model] = JSON.parse(key);
+  return { provider, model, effort: effort || null, message: (message || "").trim() || null };
+}
+// --- end routing-logic ---
 
 // --- slice2-evidence ---
 // --- end slice2-evidence ---
