@@ -7,7 +7,6 @@ const REFRESH_HIDDEN = 30000;
 const BACKOFF_MAX = 30000;
 const PAGE_EVENTS = 500;
 const PAGE_RUNS = 200;
-const HISTORY_PAGES_PER_TICK = 20;
 const TAIL_THRESHOLD = 72;
 const CLIP_CHARS = 2000;
 const HARD_SLICE = 50000;
@@ -247,9 +246,11 @@ const store = {
     id: null,
     run: null,
     events: [],
-    eventsAfter: 0,
+    eventsAfter: 0, // newest loaded event id; forward polls continue from here
+    historyFloor: null, // oldest loaded event id; null until the first page arrives
     historyDone: false,
-    historyTruncated: false,
+    eventFilter: "",
+    previews: {},
     messages: [],
     usage: [],
     changes: null,
@@ -287,7 +288,7 @@ function resetStore(instanceId) {
 
 function resetDetail(runId) {
   store.detail = {
-    id: runId, run: null, events: [], eventsAfter: 0, historyDone: false, historyTruncated: false,
+    id: runId, run: null, events: [], eventsAfter: 0, historyFloor: null, historyDone: false, eventFilter: "", previews: {},
     messages: [], usage: [], changes: null, artifacts: [], loaded: { changes: false, usage: false, artifacts: false },
   };
   const feed = document.getElementById("feed");
@@ -295,6 +296,7 @@ function resetDetail(runId) {
   feed._keyed = new Map();
   feed._tools = new Map();
   feed._appliedUpdates = new Set();
+  document.getElementById("load-history").hidden = true;
   document.getElementById("feed-brief").hidden = true;
   document.getElementById("feed-handoff").hidden = true;
   setFollow(true);
@@ -528,18 +530,20 @@ async function pollRun() {
     detail.run = await api.get(`/api/runs/${detail.id}`);
     detail.messages = await api.get(`/api/runs/${detail.id}/messages`);
   }
-  for (let page = 0; page < HISTORY_PAGES_PER_TICK; page += 1) {
-    const events = await api.get(`/api/runs/${detail.id}/events?after=${detail.eventsAfter}`);
-    if (events.length) {
-      detail.eventsAfter = events[events.length - 1].id;
-      detail.events.push(...events);
-      markDirty("run");
+  if (detail.historyFloor === null) {
+    // First open: the newest page only, so long runs open fast. Load earlier history pages backwards on demand.
+    absorbHistory(detail, await api.get(`/api/runs/${detail.id}/events?order=desc&limit=${PAGE_EVENTS}`));
+    markDirty("run");
+  } else {
+    for (let page = 0; page < 10; page += 1) {
+      const events = await api.get(`/api/runs/${detail.id}/events?after=${detail.eventsAfter}`);
+      if (events.length) {
+        detail.eventsAfter = events[events.length - 1].id;
+        detail.events.push(...events);
+        markDirty("run");
+      }
+      if (events.length < PAGE_EVENTS) break;
     }
-    if (events.length < PAGE_EVENTS) {
-      detail.historyDone = true;
-      break;
-    }
-    if (page === HISTORY_PAGES_PER_TICK - 1) detail.historyTruncated = true;
   }
   const section = store.route.section;
   if (section === "changes" && !detail.loaded.changes) {
@@ -1132,7 +1136,7 @@ function renderActivity() {
   feed._tools = feed._tools || new Map();
   const machineTotal = thread.filter(isMachineEntry).length;
   document.getElementById("machine-count").textContent = machineTotal ? `(${machineTotal})` : "";
-  document.getElementById("history-note").hidden = !detail.historyTruncated;
+  document.getElementById("load-history").hidden = detail.historyDone || detail.historyFloor === null;
 
   const brief = document.getElementById("feed-brief");
   brief.hidden = false;
@@ -1172,8 +1176,9 @@ function renderActivity() {
   for (const entry of updates) {
     if (!feed._appliedUpdates) feed._appliedUpdates = new Set();
     if (feed._appliedUpdates.has(entry.key)) continue;
-    feed._appliedUpdates.add(entry.key);
     const orphan = applyToolUpdate(entry, feed._tools);
+    if (orphan && !detail.historyDone) continue; // its tool call is probably on an earlier page; retry once that loads
+    feed._appliedUpdates.add(entry.key);
     if (orphan) feed.append(orphan);
   }
   feed.classList.toggle("show-machine", document.getElementById("show-machine").checked);
@@ -1243,14 +1248,24 @@ function renderArtifacts() {
     panel.replaceChildren(el("p", { class: "view-state", text: "No artifacts were published." }));
     return;
   }
-  const table = el("table", { class: "plain" },
-    el("thead", null, el("tr", null, ...["Name", "Type", "Size", "Digest", ""].map((h) => el("th", { text: h })))),
-    el("tbody", null, ...detail.artifacts.map((artifact) => el("tr", null,
+  const rows = [];
+  for (const artifact of detail.artifacts) {
+    const plan = previewPlan(artifact);
+    const preview = detail.previews[artifact.artifact_id];
+    rows.push(el("tr", null,
       el("td", { class: "mono", text: artifact.name }),
       el("td", { text: artifact.media_type }),
       el("td", { text: fmt.bytes(artifact.byte_size) }),
-      el("td", { class: "mono faint", text: (artifact.digest || artifact.sha256 || "").slice(0, 12) }),
-      el("td", null, el("a", { href: `/api/artifacts/${artifact.artifact_id}/content`, text: "download" }))))));
+      el("td", { class: "mono faint", title: artifact.sha256, text: (artifact.sha256 || "").slice(0, 12) }),
+      el("td", null,
+        plan ? el("button", { type: "button", class: "expand-btn", dataset: { action: "artifact-preview", artifact: artifact.artifact_id }, text: preview ? "hide" : "preview" }) : null,
+        plan ? " " : null,
+        el("a", { href: `/api/artifacts/${artifact.artifact_id}/content`, text: "download" }))));
+    if (preview) rows.push(el("tr", { class: "artifact-preview" }, el("td", { colspan: "5" }, buildArtifactPreview(artifact, preview))));
+  }
+  const table = el("table", { class: "plain" },
+    el("thead", null, el("tr", null, ...["Name", "Type", "Size", "Digest", ""].map((h) => el("th", { text: h })))),
+    el("tbody", null, rows));
   panel.replaceChildren(table);
 }
 
@@ -1315,13 +1330,18 @@ function renderEvidence() {
   fact("finished", run.finished_at);
   if (run.verify) fact("verifier", `${(run.verify.argv || []).join(" ")} (${run.verify.timeout_seconds}s)`);
 
-  panel.replaceChildren(
+  // The raw events block persists across renders so its filter box keeps focus while the run polls.
+  let raw = panel.querySelector(".raw-events");
+  if (!raw) panel.append(raw = buildRawEvents());
+  for (const node of [...panel.children]) if (node !== raw) node.remove();
+  panel.prepend(
     el("div", { class: "evidence-block" }, el("h2", { text: "Family" }), lineage),
     el("div", { class: "evidence-block" }, el("h2", { text: "Facts" }), facts),
     el("div", { class: "evidence-block" },
       el("details", null, el("summary", { text: "Request snapshot" }), boundedPre(JSON.stringify(run.request_snapshot ?? {}, null, 2))),
       el("details", null, el("summary", { text: "Profile snapshot" }), boundedPre(JSON.stringify(run.profile_snapshot ?? {}, null, 2)))),
   );
+  renderRawEvents(raw);
 }
 
 function renderRun() {
@@ -1728,7 +1748,125 @@ function rerouteBody(key, effort, message) {
 // --- end routing-logic ---
 
 // --- slice2-evidence ---
+document.getElementById("history-note").after(
+  el("button", { id: "load-history", type: "button", class: "btn", dataset: { action: "load-history" }, hidden: "", text: "Load earlier history" }));
+
+Object.assign(ACTIONS, {
+  "load-history": (button) => act("load-history", button, async () => {
+    const detail = store.detail;
+    if (detail.historyDone || !detail.historyFloor) return;
+    const page = await api.get(`/api/runs/${detail.id}/events?order=desc&limit=${PAGE_EVENTS}&before=${detail.historyFloor}`);
+    absorbHistory(detail, page);
+    const feed = document.getElementById("feed");
+    const height = feed.scrollHeight, top = feed.scrollTop;
+    markDirty("run"); render();
+    feed.scrollTop = top + feed.scrollHeight - height; // keep the rows the operator was reading in place
+  }),
+  "artifact-preview": (button) => {
+    const id = button.dataset.artifact;
+    const detail = store.detail;
+    if (detail.previews[id]) {
+      delete detail.previews[id];
+      markDirty("run");
+      return;
+    }
+    const artifact = detail.artifacts.find((item) => item.artifact_id === id);
+    const plan = artifact && previewPlan(artifact);
+    if (!plan) return;
+    return act(`preview:${id}`, button, async () => {
+      let preview = plan.note ? { note: plan.note } : plan.kind === "image" ? { image: true } : null;
+      if (!preview) {
+        try {
+          const response = await fetch(`/api/artifacts/${id}/content`, { credentials: "same-origin" });
+          if (!response.ok) {
+            const value = await response.json().catch(() => null);
+            throw new ApiError(response.status, value?.error?.message);
+          }
+          preview = { text: await response.text() };
+        } catch (error) {
+          preview = { note: `Preview failed: ${error.message}` };
+        }
+      }
+      detail.previews[id] = preview;
+      markDirty("run");
+    });
+  },
+});
+
+function buildArtifactPreview(artifact, preview) {
+  if (preview.note) return el("p", { class: "muted", text: preview.note });
+  if (preview.image) return el("img", { src: `/api/artifacts/${artifact.artifact_id}/content`, alt: artifact.name });
+  return boundedPre(preview.text);
+}
+
+function buildRawEvents() {
+  const input = el("input", { type: "search", placeholder: "Filter by event type", "aria-label": "Filter raw events by type" });
+  const block = el("div", { class: "evidence-block raw-events" },
+    el("h2", { text: "Raw events" }),
+    el("div", { class: "raw-toolbar" }, input, el("span", { class: "raw-count" })),
+    el("div", { class: "raw-rows" }),
+    el("p", { class: "muted raw-note", hidden: "" }));
+  input.addEventListener("input", () => {
+    store.detail.eventFilter = input.value;
+    renderRawEvents(block);
+  });
+  return block;
+}
+
+function renderRawEvents(block) {
+  const detail = store.detail;
+  const input = block.querySelector("input");
+  if (input.value !== detail.eventFilter) input.value = detail.eventFilter;
+  const { rows, matched } = rawEventRows(detail.events, detail.eventFilter);
+  block.querySelector(".raw-count").textContent = `${fmt.count(matched)} of ${fmt.count(detail.events.length)} loaded events`;
+  const note = block.querySelector(".raw-note");
+  note.hidden = rows.length === matched;
+  note.textContent = `Showing the most recent ${fmt.count(rows.length)} of ${fmt.count(matched)} matching events.`;
+  keyedList(block.querySelector(".raw-rows"), rows, (event) => event.id, () => "", buildRawRow, () => {});
+}
+
+function buildRawRow(event) {
+  return el("div", { class: "raw-row" },
+    el("span", { class: "mono", text: event.type }),
+    el("span", { class: "faint", text: `#${event.id}` }),
+    el("span", { class: "muted", title: event.created_at, text: fmt.rel(event.created_at) }),
+    el("details", null, el("summary", { text: "payload" }), boundedPre(JSON.stringify(event.payload ?? {}, null, 1))));
+}
 // --- end slice2-evidence ---
+
+// --- evidence-logic ---
+const PREVIEW_TEXT_BYTES = 256 * 1024;
+const PREVIEW_IMAGE_BYTES = 2 * 1024 * 1024;
+const RAW_EVENT_ROWS = 500;
+
+// Fold one descending events page into the detail: the first page seeds the forward cursor, later pages prepend.
+function absorbHistory(detail, page) {
+  if (page.length) {
+    detail.events = [...page].reverse().concat(detail.events);
+    detail.historyFloor = page[page.length - 1].id;
+    if (!detail.eventsAfter) detail.eventsAfter = page[0].id;
+  } else if (detail.historyFloor === null) {
+    detail.historyFloor = 0;
+  }
+  detail.historyDone = page.length < PAGE_EVENTS;
+}
+
+function rawEventRows(events, query) {
+  const needle = (query || "").trim().toLowerCase();
+  const matched = needle ? events.filter((event) => event.type.toLowerCase().includes(needle)) : events;
+  return { rows: matched.slice(-RAW_EVENT_ROWS).reverse(), matched: matched.length };
+}
+
+function previewPlan(artifact) {
+  if (artifact.available === false) return null;
+  const type = artifact.media_type || "";
+  const image = type.startsWith("image/");
+  if (!image && !type.startsWith("text/") && type !== "application/json") return null;
+  const cap = image ? PREVIEW_IMAGE_BYTES : PREVIEW_TEXT_BYTES;
+  if (artifact.byte_size > cap) return { note: `Too large to preview (${fmt.bytes(artifact.byte_size)}; the cap is ${fmt.bytes(cap)}). Use download.` };
+  return { kind: image ? "image" : "text" };
+}
+// --- end evidence-logic ---
 
 // --- slice2-config ---
 store.catalog = null; // /api/models rows for the profile form, or null until loaded

@@ -42,7 +42,7 @@ GET       /api/storage/plans/{id}
 POST      /api/storage/plans/{id}/apply
 ```
 
-List/feed endpoints accept an `after` cursor where applicable. The usage feed contains raw token facts only.
+List/feed endpoints accept an `after` cursor where applicable; `/api/runs`, `/api/events`, and `/api/runs/{id}/events` also take `order=asc|desc`, `limit` (runs 1..200, events 1..500), and a `before` cursor (`id < before`) for paging backwards. The usage feed contains raw token facts only.
 
 `pause` parks the run at the next safe boundary: the current step is cancelled, the worktree is checkpointed, the DSH process stops, and capacity is released. The run reports `status: waiting` with a null `waiting_kind`, a `waiting_detail` beginning with `paused`, and `paused: true` in its payload. `resume` continues the same session.
 

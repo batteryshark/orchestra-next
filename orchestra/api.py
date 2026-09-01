@@ -74,6 +74,29 @@ def _managed(row) -> dict:
     return dict(row)
 
 
+def _event_page(con, query: dict, run_id: int | None = None) -> list[dict]:
+    """One page of the events feed: `after`/`before` id cursors, `order`, `limit` (1..500)."""
+    order = query.get("order", "asc")
+    if order not in ("asc", "desc"):
+        raise Problem(400, "order must be asc or desc")
+    try:
+        after = int(query.get("after", 0) or 0)
+        before = int(query.get("before", 0) or 0)
+        limit = max(1, min(int(query.get("limit", 500) or 500), 500))
+    except ValueError as exc:
+        raise Problem(400, "after, before, and limit must be integers") from exc
+    clause, params = "id>?", [after]
+    if run_id is not None:
+        clause, params = "run_id=? AND " + clause, [run_id, *params]
+    if before:
+        clause += " AND id<?"; params.append(before)
+    direction = " DESC" if order == "desc" else ""
+    values = []
+    for row in con.execute(f"SELECT * FROM events WHERE {clause} ORDER BY id{direction} LIMIT {limit}", params):
+        value = dict(row); value["payload"] = json.loads(value.pop("payload_json")); values.append(value)
+    return values
+
+
 class API:
     def __init__(self, con):
         self.con = con
@@ -156,11 +179,7 @@ class API:
                 return Response(200, envelope(self.con, runs.payload(run, detail=True)))
             if suffix == ["events"] and method == "GET":
                 _need(identity, "read", target=run_id)
-                after = int(query.get("after", 0) or 0)
-                values = []
-                for row in self.con.execute("SELECT * FROM events WHERE run_id=? AND id>? ORDER BY id LIMIT 500", (run_id, after)):
-                    value = dict(row); value["payload"] = json.loads(value.pop("payload_json")); values.append(value)
-                return Response(200, envelope(self.con, values))
+                return Response(200, envelope(self.con, _event_page(self.con, query, run_id)))
             if suffix == ["usage"] and method == "GET":
                 _need(identity, "read", target=run_id)
                 after = int(query.get("after", 0) or 0)
@@ -321,21 +340,7 @@ class API:
             return Response(200, envelope(self.con, [dict(row) for row in self.con.execute("SELECT * FROM control_events WHERE id>? ORDER BY id LIMIT 500", (after,))]))
         if parts == ["events"] and method == "GET":
             _need(identity, "read")
-            order = query.get("order", "asc")
-            if order not in ("asc", "desc"):
-                raise Problem(400, "order must be asc or desc")
-            try:
-                after = int(query.get("after", 0) or 0)
-                limit = max(1, min(int(query.get("limit", 500) or 500), 500))
-            except ValueError as exc:
-                raise Problem(400, "after and limit must be integers") from exc
-            values = []
-            direction = " DESC" if order == "desc" else ""
-            for row in self.con.execute(f"SELECT * FROM events WHERE id>? ORDER BY id{direction} LIMIT {limit}", (after,)):
-                value = dict(row)
-                value["payload"] = json.loads(value.pop("payload_json"))
-                values.append(value)
-            return Response(200, envelope(self.con, values))
+            return Response(200, envelope(self.con, _event_page(self.con, query)))
         if parts == ["usage"] and method == "GET":
             _need(identity, "read")
             after = int(query.get("after", 0) or 0)
