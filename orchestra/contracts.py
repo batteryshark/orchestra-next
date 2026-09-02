@@ -106,12 +106,13 @@ class RunRequest:
     verify: Verify | None = None
     max_children: int | None = None
     max_child_tier: int | None = None
+    allow_antigravity: bool = False
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> "RunRequest":
         if not isinstance(value, Mapping):
             raise ContractError("request body must be an object")
-        accepted = {"request_id", "profile", "objective", "group", "strategy", "permission_mode", "title", "cwd", "ref", "after", "requested_by", "limits", "verify", "max_children", "max_child_tier"}
+        accepted = {"request_id", "profile", "objective", "group", "strategy", "permission_mode", "title", "cwd", "ref", "after", "requested_by", "limits", "verify", "max_children", "max_child_tier", "allow_antigravity"}
         unknown = set(value) - accepted
         if unknown:
             raise ContractError("unknown run request fields: " + ", ".join(sorted(unknown)))
@@ -131,6 +132,9 @@ class RunRequest:
         after = tuple(Dependency.from_value(item) for item in raw_after)
         if len({item.run_id for item in after}) != len(after):
             raise ContractError("after must not repeat a run")
+        allow_antigravity = value.get("allow_antigravity", False)
+        if not isinstance(allow_antigravity, bool):
+            raise ContractError("allow_antigravity must be a boolean")
         return cls(
             request_id=_text(value.get("request_id"), "request_id", required=True, maximum=200) or "",
             profile=_text(value.get("profile"), "profile", required=True, maximum=128) or "",
@@ -144,10 +148,11 @@ class RunRequest:
             verify=Verify.from_value(value.get("verify")),
             max_children=None if value.get("max_children") is None else _integer(value["max_children"], "max_children", 1, 100),
             max_child_tier=None if value.get("max_child_tier") is None else _integer(value["max_child_tier"], "max_child_tier", 1, 3),
+            allow_antigravity=allow_antigravity,
         )
 
     def as_dict(self) -> dict:
-        return {"request_id": self.request_id, "profile": self.profile, "objective": self.objective, "group": self.group, "strategy": self.strategy, "permission_mode": self.permission_mode, "title": self.title, "cwd": self.cwd, "ref": self.ref, "after": [item.as_dict() for item in self.after], "requested_by": self.requested_by, "limits": {"max_rounds": self.max_rounds, "active_seconds": self.active_seconds}, "verify": self.verify.as_dict() if self.verify else None, "max_children": self.max_children, "max_child_tier": self.max_child_tier}
+        return {"request_id": self.request_id, "profile": self.profile, "objective": self.objective, "group": self.group, "strategy": self.strategy, "permission_mode": self.permission_mode, "title": self.title, "cwd": self.cwd, "ref": self.ref, "after": [item.as_dict() for item in self.after], "requested_by": self.requested_by, "limits": {"max_rounds": self.max_rounds, "active_seconds": self.active_seconds}, "verify": self.verify.as_dict() if self.verify else None, "max_children": self.max_children, "max_child_tier": self.max_child_tier, "allow_antigravity": self.allow_antigravity}
 
 
 def child_tier_allowed(parent_tier: int, child_tier: int, ceiling: int | None = None) -> bool:

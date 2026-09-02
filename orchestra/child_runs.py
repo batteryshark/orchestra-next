@@ -55,6 +55,7 @@ def create(con, parent_run_id: int, value: dict, *, actor="run"):
         "verify": json.loads(parent["verify_json"]) if parent["verify_json"] else None,
         "max_children": _cap(value.get("max_children"), parent["max_children"], parent["max_children"]),
         "max_child_tier": _cap(value.get("max_child_tier"), parent["max_child_tier"], ceiling),
+        "allow_antigravity": bool(value.get("allow_antigravity", False)) and bool(json.loads(parent["request_snapshot"]).get("allow_antigravity")),
     }
     request = RunRequest.from_mapping(request_value)
     child, _ = runs.submit(con, request, parent_run_id=parent_run_id)

@@ -77,4 +77,8 @@
       complete. Use the orchestra-next CLI bridge for questions, child runs,
       artifacts, and run interaction. Never invent an answer to a blocked
       decision. Do not launch DSH subagents or workflows unless this process was
-      explicitly started with Orchestra's Ralph overlay.
+      explicitly started with Orchestra's Ralph overlay. When the run was
+      dispatched with Antigravity delegation allowed, `orchestra-next delegate
+      "<objective>" --model <id>` sends a bounded read-only review of the
+      worktree to Google's Antigravity and returns its findings; use it for
+      substantial reviews, not inner-loop questions.
