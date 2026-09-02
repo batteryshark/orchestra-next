@@ -13,6 +13,7 @@ GET       /api/runs/{id}/dependencies
 GET       /api/runs/{id}/messages
 GET|POST  /api/runs/{id}/children
 GET|POST  /api/runs/{id}/artifacts
+GET|POST  /api/runs/{id}/delegations
 GET       /api/runs/{id}/changes
 POST      /api/runs/{id}/merge
 
@@ -64,13 +65,20 @@ List/feed endpoints accept an `after` cursor where applicable; `/api/runs`, `/ap
   "limits": {"max_rounds": 32, "active_seconds": 7200},
   "verify": {"argv": ["command", "arg"], "timeout_seconds": 600},
   "max_children": null,
-  "max_child_tier": null
+  "max_child_tier": null,
+  "allow_antigravity": false
 }
 ```
 
-`strategy` is `goal` or `ralph`. Permission mode is `read-only`, `workspace-write`, or explicit `danger-full-access`.
+`strategy` is `goal` or `ralph`. Permission mode is `read-only`, `workspace-write`, or explicit `danger-full-access`. `allow_antigravity` (CLI `--allow-antigravity`) authorizes the worker to send its worktree to Google's Antigravity through `orchestra-next delegate`; it is off by default because it is an external data boundary.
 
-A child run (`POST /api/runs/{id}/children`) inherits its parent's permission ceiling, verifier, `max_children`, and `max_child_tier`; the child body cannot raise any of them.
+A child run (`POST /api/runs/{id}/children`) inherits its parent's permission ceiling, verifier, `max_children`, and `max_child_tier`; the child body cannot raise any of them, and it may set `allow_antigravity` only when the parent's request has it.
+
+## Antigravity delegations
+
+`orchestra-next delegate "<objective>" --model <id>` runs the official `agy` CLI (`--print --sandbox`, read-only review mode, cwd = the run worktree) and posts the result to `POST /api/runs/{id}/delegations` (run `delegate` authority or an operator device; body: `model`, `mode` = `review`, `objective`, `conversation_id`, `status`, `num_turns`, `duration_seconds`, `usage {input, output, thinking, cache_read, total}`, `response`, `truncated`, `error`, `stderr`). The model id must appear in the live `agy models` catalog, and the bridge reuses the newest recorded `conversation_id` for the run.
+Antigravity reports usage cumulatively per conversation, so the server stores the raw snapshot and a `delta` against the newest prior delegation with the same `conversation_id` (first turn: delta = usage; negatives clamp to 0). The delta becomes one `usage_events` row with provider `antigravity` and `event_type` `antigravity.delegate`; it never counts toward the run's `tokens_*` columns.
+`GET /api/runs/{id}/delegations` returns the recorded delegation events newest first, each with `event_id` and `created_at`.
 
 ## Authentication
 

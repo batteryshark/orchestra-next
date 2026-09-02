@@ -84,7 +84,7 @@ def cmd_run(args):
             "ref": args.ref, "requested_by": "operator",
             "limits": {"max_rounds": args.max_rounds, "active_seconds": args.active_seconds},
             "verify": verify, "max_children": args.max_children,
-            "max_child_tier": args.max_child_tier}
+            "max_child_tier": args.max_child_tier, "allow_antigravity": args.allow_antigravity}
     _print(_client(args).post(API + "/runs", body))
 
 
@@ -137,6 +137,29 @@ def cmd_artifact(args):
     _print(_client(args).post(f"{API}/runs/{_run_id(args)}/artifacts", {"path": args.path, "name": args.name}))
 
 
+def cmd_delegate(args):
+    from orchestra import antigravity
+    run_id = _run_id(args)
+    api = _client(args)
+    run = api.get(f"{API}/runs/{run_id}")["data"]
+    if not (run.get("request_snapshot") or {}).get("allow_antigravity"):
+        raise ValueError("Antigravity delegation is not authorized for this run; dispatch with --allow-antigravity")
+    if args.mode != "review":
+        raise ValueError("delegate --mode must be review")
+    if not run.get("workdir"):
+        raise ValueError("run has no worktree yet; delegation needs a working directory")
+    catalog = antigravity.catalog()
+    if args.model not in catalog:
+        raise ValueError(f"unknown Antigravity model {args.model!r}; available: {', '.join(catalog)}")
+    prior = api.get(f"{API}/runs/{run_id}/delegations")["data"]
+    conversation = prior[0].get("conversation_id") if prior else None
+    result = antigravity.delegate(args.objective, args.model, run["workdir"], conversation)
+    record = api.post(f"{API}/runs/{run_id}/delegations", result)["data"]
+    print(result["response"] if result["response"] is not None else "")
+    print(json.dumps({"delegation": {"model": result["model"], "conversation_id": result["conversation_id"], "status": result["status"], "tokens": record["delta"]["total"]}}), file=sys.stderr)
+    return 0 if result["status"] == "SUCCESS" else 1
+
+
 def cmd_attention(args):
     if args.action == "list":
         _print(_client(args).get(API + "/attention", status=args.status))
@@ -167,7 +190,7 @@ def build_parser():
     claude_check = claude_sub.add_parser("check"); claude_check.set_defaults(func=cmd_claude_check)
     serve = sub.add_parser("daemon"); serve.add_argument("--interval", type=float, default=1); serve.add_argument("--once", action="store_true"); serve.add_argument("--no-preflight", action="store_true", help=argparse.SUPPRESS); serve.set_defaults(func=cmd_daemon)
     internal = sub.add_parser("supervise", help="internal per-run supervisor"); internal.add_argument("run_id", type=int); internal.set_defaults(func=cmd_supervise)
-    run = sub.add_parser("run"); run.add_argument("profile"); run.add_argument("objective"); run.add_argument("--request-id"); run.add_argument("--group", default="general"); run.add_argument("--strategy", choices=("goal", "ralph"), default="goal"); run.add_argument("--permission-mode", choices=("read-only", "workspace-write", "danger-full-access"), default="workspace-write"); run.add_argument("--title"); run.add_argument("--cwd"); run.add_argument("--ref"); run.add_argument("--max-rounds", type=int); run.add_argument("--active-seconds", type=int); run.add_argument("--verify", nargs="+"); run.add_argument("--verify-timeout", type=int, default=600); run.add_argument("--max-children", type=int); run.add_argument("--max-child-tier", type=int); run.set_defaults(func=cmd_run)
+    run = sub.add_parser("run"); run.add_argument("profile"); run.add_argument("objective"); run.add_argument("--request-id"); run.add_argument("--group", default="general"); run.add_argument("--strategy", choices=("goal", "ralph"), default="goal"); run.add_argument("--permission-mode", choices=("read-only", "workspace-write", "danger-full-access"), default="workspace-write"); run.add_argument("--title"); run.add_argument("--cwd"); run.add_argument("--ref"); run.add_argument("--max-rounds", type=int); run.add_argument("--active-seconds", type=int); run.add_argument("--verify", nargs="+"); run.add_argument("--verify-timeout", type=int, default=600); run.add_argument("--max-children", type=int); run.add_argument("--max-child-tier", type=int); run.add_argument("--allow-antigravity", action="store_true"); run.set_defaults(func=cmd_run)
     listing = sub.add_parser("runs"); listing.add_argument("--after", type=int, default=0); listing.set_defaults(func=cmd_runs)
     show = sub.add_parser("show"); show.add_argument("run_id", type=int); show.set_defaults(func=cmd_show)
     for name in ("tell", "interrupt"):
@@ -186,6 +209,7 @@ def build_parser():
     ask = sub.add_parser("ask"); ask.add_argument("prompt"); ask.add_argument("--kind", default="question"); ask.add_argument("--run", dest="run_id", type=int); ask.set_defaults(func=cmd_ask)
     child = sub.add_parser("child"); child.add_argument("profile"); child.add_argument("objective"); child.add_argument("--strategy", default="goal"); child.add_argument("--max-rounds", type=int); child.add_argument("--request-id"); child.add_argument("--run", dest="run_id", type=int); child.set_defaults(func=cmd_child)
     artifact = sub.add_parser("artifact"); artifact.add_argument("path"); artifact.add_argument("--name"); artifact.add_argument("--run", dest="run_id", type=int); artifact.set_defaults(func=cmd_artifact)
+    delegate = sub.add_parser("delegate", help="bounded read-only Antigravity review of the worktree"); delegate.add_argument("objective"); delegate.add_argument("--model", required=True); delegate.add_argument("--mode", default="review"); delegate.add_argument("--run", dest="run_id", type=int); delegate.set_defaults(func=cmd_delegate)
     att = sub.add_parser("attention"); att_sub = att.add_subparsers(dest="action", required=True)
     al = att_sub.add_parser("list"); al.add_argument("--status", default="open"); al.set_defaults(func=cmd_attention)
     lease = att_sub.add_parser("lease"); lease.add_argument("attention_id"); lease.add_argument("--seconds", type=int, default=60); lease.set_defaults(func=cmd_attention)

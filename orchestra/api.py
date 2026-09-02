@@ -99,6 +99,57 @@ def _event_page(con, query: dict, run_id: int | None = None) -> list[dict]:
     return values
 
 
+DELEGATION_EVENT = "delegation.antigravity"
+DELEGATION_USAGE = ("input", "output", "thinking", "cache_read", "total")
+DELEGATION_RESPONSE_LIMIT = 8_000
+DELEGATION_TEXT_LIMIT = 2_000
+
+
+def _delegations(con, run_id: int) -> list[dict]:
+    values = []
+    for row in con.execute("SELECT id,payload_json,created_at FROM events WHERE run_id=? AND type=? ORDER BY id DESC", (run_id, DELEGATION_EVENT)):
+        values.append({**json.loads(row["payload_json"]), "event_id": row["id"], "created_at": row["created_at"]})
+    return values
+
+
+def _record_delegation(con, run, data: dict, *, actor: str) -> dict:
+    model, mode, usage = data.get("model"), data.get("mode"), data.get("usage")
+    if not isinstance(model, str) or not model.strip():
+        raise Problem(400, "model must be a non-empty string")
+    if mode != "review":
+        raise Problem(400, "mode must be review")
+    if not isinstance(usage, dict) or any(isinstance(usage.get(key), bool) or not isinstance(usage.get(key), int) or usage[key] < 0 for key in DELEGATION_USAGE):
+        raise Problem(400, "usage must contain non-negative integer " + ", ".join(DELEGATION_USAGE))
+    usage = {key: usage[key] for key in DELEGATION_USAGE}
+    conversation = data.get("conversation_id") if isinstance(data.get("conversation_id"), str) else None
+    status = str(data.get("status") or "ERROR")[:40]
+    turns = data.get("num_turns") if isinstance(data.get("num_turns"), int) and not isinstance(data.get("num_turns"), bool) else 0
+    duration = data.get("duration_seconds") if isinstance(data.get("duration_seconds"), (int, float)) and not isinstance(data.get("duration_seconds"), bool) else None
+    def text(key, limit):
+        value = data.get(key)
+        return value[:limit] if isinstance(value, str) else None
+    # Antigravity reports cumulative usage per conversation; store the delta against the newest prior turn.
+    prior = next((item for item in _delegations(con, run["id"]) if conversation and item.get("conversation_id") == conversation), None)
+    base = (prior or {}).get("usage") or {}
+    delta = {key: max(0, usage[key] - int(base.get(key) or 0)) for key in DELEGATION_USAGE}
+    payload = {
+        "model": model.strip(), "mode": mode, "objective": text("objective", DELEGATION_RESPONSE_LIMIT) or "",
+        "conversation_id": conversation, "status": status, "num_turns": turns, "duration_seconds": duration,
+        "usage": usage, "delta": delta, "response": text("response", DELEGATION_RESPONSE_LIMIT),
+        "truncated": bool(data.get("truncated")) or len(data.get("response") or "") > DELEGATION_RESPONSE_LIMIT,
+        "error": text("error", DELEGATION_TEXT_LIMIT), "stderr": text("stderr", DELEGATION_TEXT_LIMIT),
+    }
+    with con:
+        db.append_event(con, run["id"], DELEGATION_EVENT, payload)
+        event_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+        if conversation:
+            # Tokens stay out of the run's tokens_* columns: Antigravity is a distinct source.
+            con.execute("INSERT OR IGNORE INTO usage_events(run_id,session_id,source_seq,event_type,provider,model,descendant_session_id,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,total_tokens,cache_epoch,observed_at,raw_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (run["id"], conversation, turns, "antigravity.delegate", "antigravity", payload["model"], None, delta["input"], delta["output"], delta["cache_read"], 0, delta["total"], run["cache_epoch"], db.now(), json.dumps(usage)))
+        db.record_control(con, actor=actor, action="run.delegate", outcome=status, target_type="run", target_id=run["id"], detail={"model": payload["model"], "conversation_id": conversation, "delta": delta})
+    return {**payload, "event_id": event_id}
+
+
 class API:
     def __init__(self, con):
         self.con = con
@@ -244,6 +295,13 @@ class API:
                     _need(identity, "artifact", target=run_id)
                     data = _body(body)
                     return Response(201, envelope(self.con, artifacts.publish(self.con, run_id, data.get("path", ""), name=data.get("name"))))
+            if suffix == ["delegations"]:
+                if method == "GET":
+                    _need(identity, "read", target=run_id)
+                    return Response(200, envelope(self.con, _delegations(self.con, run_id)))
+                if method == "POST":
+                    _need(identity, "delegate", target=run_id)
+                    return Response(201, envelope(self.con, _record_delegation(self.con, run, _body(body), actor=_actor(identity))))
             if suffix == ["changes"] and method == "GET":
                 _need(identity, "read", target=run_id)
                 if not run["workdir"]:
