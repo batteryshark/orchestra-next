@@ -59,9 +59,12 @@ def cached_catalog(*, refresh: bool = False) -> list[str]:
         return _CATALOG[1]
 
 
-def build_argv(objective: str, model: str, conversation_id: str | None = None) -> list[str]:
+def build_argv(objective: str, model: str, conversation_id: str | None = None, workdir: str | None = None) -> list[str]:
     argv = [executable(), "--print", PROMPT_PREFIX + objective, "--model", model, "--output-format", "json",
             "--sandbox", "--disable-slash-commands", "--print-timeout", PRINT_TIMEOUT]
+    if workdir:
+        # The sandbox does not expose the cwd by itself; --add-dir mounts the worktree read paths.
+        argv += ["--add-dir", workdir]
     if conversation_id:
         argv += ["--conversation", conversation_id]
     return argv
@@ -118,7 +121,7 @@ def record(objective: str, model: str, parsed: dict | None, *, status: str | Non
 
 
 def delegate(objective: str, model: str, workdir: str, conversation_id: str | None = None) -> dict:
-    argv = build_argv(objective, model, conversation_id)
+    argv = build_argv(objective, model, conversation_id, workdir)
     try:
         result = subprocess.run(argv, cwd=workdir, env=build_env(), shell=False, capture_output=True, text=True,
                                 timeout=PROCESS_TIMEOUT, stdin=subprocess.DEVNULL)
