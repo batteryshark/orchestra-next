@@ -167,6 +167,12 @@ class DriverTests(unittest.TestCase):
         self.assertIsNone(antigravity.parse_output("nothing"))
         long = antigravity.record("o", "m", {"response": "x" * 40_000, "status": "SUCCESS", "usage": {"input_tokens": 1, "total_tokens": -5}})
         self.assertEqual((len(long["response"]), long["truncated"], long["usage"]["total"], long["status"]), (32_000, True, 0, "SUCCESS"))
+        hint = 'jetski: no output produced — a tool required the "command" permission that headless mode cannot prompt for, so it was auto-denied.'
+        denied = antigravity.record("o", "m", {"response": "", "status": "SUCCESS", "usage": {}}, stderr=hint + "\n")
+        self.assertEqual(denied["status"], "DENIED")
+        self.assertIn("auto-denied", denied["error"])
+        fine = antigravity.record("o", "m", {"response": "findings", "status": "SUCCESS", "usage": {}}, stderr=hint)
+        self.assertEqual(fine["status"], "SUCCESS")
 
     def test_contract_rejects_non_boolean(self):
         with self.assertRaises(ContractError):
