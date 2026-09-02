@@ -1,6 +1,6 @@
 # Antigravity CLI delegation spike
 
-Status: viable for bounded delegation; not approved as a DSH provider
+Status: implemented as the `orchestra-next delegate` bridge command (see docs/API.md); not a DSH provider
 
 Date: 2026-09-02
 

@@ -228,6 +228,16 @@ function uiStateDecode(raw) {
   }
   return out;
 }
+// One delegation event → the strings the activity row and evidence table show.
+function delegationSummary(payload) {
+  const ok = payload?.status === "SUCCESS";
+  const delta = payload?.delta || payload?.usage || {};
+  const conversation = payload?.usage?.total;
+  const parts = [`turn ${payload?.num_turns ?? "?"}`, `${fmt.tokens(delta.total || 0)} tokens this turn`];
+  if (conversation != null) parts.push(`${fmt.tokens(conversation)} conversation`);
+  if (payload?.duration_seconds != null) parts.push(`${Number(payload.duration_seconds).toFixed(1)}s`);
+  return { ok, title: `🛰 delegation · ${payload?.model || "?"} · ${payload?.status || "?"}`, stats: parts.join(" · ") };
+}
 // --- end logic ---
 
 // --- attention-logic ---
@@ -918,6 +928,7 @@ async function pollRun() {
   if (section === "evidence" && !detail.dependencies) {
     detail.dependencies = await api.get(`/api/runs/${detail.id}/dependencies`);
     detail.children = await api.get(`/api/runs/${detail.id}/children`);
+    detail.delegations = await api.get(`/api/runs/${detail.id}/delegations`).catch(() => []);
     markDirty("run");
   }
 }
@@ -1099,6 +1110,7 @@ const FORMS = {
     if (verifyArgv.length) body.verify = { argv: verifyArgv, timeout_seconds: Number(values.verify_timeout.value) || 600 };
     if (values.max_children.value) body.max_children = Number(values.max_children.value);
     if (values.max_child_tier.value) body.max_child_tier = Number(values.max_child_tier.value);
+    if (values.allow_antigravity.checked) body.allow_antigravity = true;
     const after = [];
     for (const line of values.after.value.split("\n")) {
       const parts = line.trim().split(/\s+/).filter(Boolean);
@@ -1334,6 +1346,7 @@ function renderRunHeader(run) {
   chips.push(el("span", { class: "chip", title: `limit ${fmt.duration(run.active_seconds_limit)}`, text: `active ${fmt.duration(run.active_seconds)}` }));
   if (run.resume_count > 0) chips.push(el("span", { class: "chip", text: `resumed ×${run.resume_count}` }));
   if (run.cache_epoch > 0) chips.push(el("span", { class: "chip warn", text: `cache epoch ${run.cache_epoch}` }));
+  if (run.request_snapshot?.allow_antigravity) chips.push(el("span", { class: "chip warn", title: "Worktree contents may be sent to Google", text: "antigravity allowed" }));
 
   const actions = [];
   const allowed = RUN_ACTION_MATRIX[run.status] || [];
@@ -1394,6 +1407,7 @@ function threadEntryKind(entry) {
   if (type === "acp.tool_call_update") return "tool-update";
   if (type.startsWith("dsh.goal")) return "goal";
   if (type.includes("compact")) return "compaction";
+  if (type === "delegation.antigravity") return "delegation";
   if (type === "dsh.user/message") return promptSource(entry.item.payload).kind === "user" ? "prompt" : "context";
   if (type === "dsh.assistant/message") {
     const parts = messageParts(entry.item.payload);
@@ -1474,6 +1488,24 @@ function buildThreadRow(entry, toolIndex) {
     if (parts.reasoning.length) body.append(el("div", { class: "thinking" }, el("span", { class: "thinking-label", text: "💭 " }), boundedPre(parts.reasoning.join("\n\n"))));
     if (parts.text.length) body.append(boundedPre(parts.text.join("\n\n")));
     return el("div", { class: "feed-item assistant" }, head(parts.text.length ? "💬 assistant" : "💭 assistant"), body);
+  }
+  if (kind === "delegation") {
+    const payload = entry.item.payload || {};
+    const summary = delegationSummary(payload);
+    const response = payload.response || "";
+    const body = el("div", { class: "item-body" },
+      el("div", { class: "muted", text: fmt.excerpt(payload.objective || "", 160) }),
+      el("div", { class: "muted mono delegation-stats", text: summary.stats }));
+    if (summary.ok) {
+      const details = el("details", null, el("summary", { text: `response (${fmt.count(response.length)} chars)${payload.truncated ? ", truncated" : ""}` }), boundedPre(response));
+      if (response.length < CLIP_CHARS) details.open = true;
+      body.append(details);
+    } else {
+      body.append(el("div", { class: "form-error", text: payload.error || `Antigravity reported ${payload.status || "an error"}` }));
+      if (payload.stderr) body.append(el("details", null, el("summary", { class: "muted", text: "stderr" }), boundedPre(payload.stderr)));
+      if (response) body.append(el("details", null, el("summary", { class: "muted", text: "partial response" }), boundedPre(response)));
+    }
+    return el("div", { class: `feed-item delegation${summary.ok ? "" : " bad"}` }, head(summary.title), body);
   }
   if (kind === "prompt") {
     return el("div", { class: "feed-item prompt" }, head("🧑 prompt"), el("div", { class: "item-body" }, boundedPre(extractText(entry.item.payload))));
@@ -1679,13 +1711,15 @@ function renderUsage() {
     el("thead", null, el("tr", null, ...["Route", "Epoch", "Descendant", "Input", "Output", "Cache read", "Cache write", "Total"].map((h) => el("th", { text: h })))),
     el("tbody", null,
       ...groups.map((group) => el("tr", null,
-        el("td", { class: "mono", text: `${group.provider ?? "?"}/${group.model ?? "?"}` }),
+        el("td", { class: "mono" }, `${group.provider ?? "?"}/${group.model ?? "?"}`, group.provider === "antigravity" ? el("span", { class: "chip warn", text: "separate subscription" }) : null),
         el("td", { text: String(group.cache_epoch) }),
         el("td", { class: "mono faint", text: group.descendant ? group.descendant.slice(0, 10) : "" }),
         cell(group.input), cell(group.output), cell(group.cache_read), cell(group.cache_write), cell(group.total))),
       el("tr", null, el("td", { text: "Total" }), el("td"), el("td"),
         cell(totals.input), cell(totals.output), cell(totals.cache_read), cell(totals.cache_write), cell(totals.total))));
-  panel.replaceChildren(table);
+  const note = groups.some((group) => group.provider === "antigravity")
+    ? el("p", { class: "usage-note", text: "Antigravity tokens are a separate subscription; they are not part of the run totals." }) : null;
+  panel.replaceChildren(...[note, table].filter(Boolean));
 }
 
 function renderEvidence() {
@@ -1718,6 +1752,7 @@ function renderEvidence() {
   fact("session", run.dsh_session_id);
   fact("resume count", run.resume_count);
   fact("requested by", run.requested_by);
+  fact("antigravity", run.request_snapshot?.allow_antigravity ? "allowed" : "not allowed");
   fact("created", run.created_at);
   fact("started", run.started_at);
   fact("finished", run.finished_at);
@@ -1730,11 +1765,26 @@ function renderEvidence() {
   panel.prepend(
     el("div", { class: "evidence-block" }, el("h2", { text: "Family" }), lineage),
     el("div", { class: "evidence-block" }, el("h2", { text: "Facts" }), facts),
+    el("div", { class: "evidence-block" }, el("h2", { text: "Delegations" }), delegationsTable(detail.delegations)),
     el("div", { class: "evidence-block" },
       el("details", null, el("summary", { text: "Request snapshot" }), boundedPre(JSON.stringify(run.request_snapshot ?? {}, null, 2))),
       el("details", null, el("summary", { text: "Profile snapshot" }), boundedPre(JSON.stringify(run.profile_snapshot ?? {}, null, 2)))),
   );
   renderRawEvents(raw);
+}
+
+function delegationsTable(rows) {
+  if (!rows) return el("p", { class: "muted", text: "Loading delegations…" });
+  if (!rows.length) return el("p", { class: "muted", text: "No delegations." });
+  return el("table", { class: "plain" },
+    el("thead", null, el("tr", null, ...["When", "Model", "Status", "Turn", "Tokens", "Conversation"].map((h) => el("th", { text: h })))),
+    el("tbody", null, ...rows.map((row) => el("tr", { class: row.status === "SUCCESS" ? null : "faint" },
+      el("td", { title: row.created_at, text: fmt.rel(row.created_at) }),
+      el("td", { class: "mono", text: row.model || "" }),
+      el("td", { text: row.status || "" }),
+      el("td", { text: String(row.num_turns ?? "") }),
+      el("td", { class: "mono", title: fmt.count(row.delta?.total || 0), text: fmt.tokens(row.delta?.total || 0) }),
+      el("td", { class: "mono faint", title: row.conversation_id || "", text: (row.conversation_id || "").slice(0, 8) })))));
 }
 
 function renderRun() {
