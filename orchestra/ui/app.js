@@ -1355,6 +1355,7 @@ function renderRunHeader(run) {
   if (allowed.includes("pause")) actions.push(el("button", { class: "btn", dataset: { action: "run-pause" }, title: "Park at the next safe boundary; Resume continues the same session", text: "Pause" }));
   if (allowed.includes("reroute")) actions.push(el("button", { class: "btn", dataset: { action: "run-reroute" }, title: "Continue the same goal on another provider/model", text: "Reroute…" }));
   if (allowed.includes("stop")) actions.push(el("button", { class: "btn btn-danger", dataset: { action: "run-stop" }, text: "Stop" }));
+  if (run.request_snapshot?.allow_antigravity && run.workdir) actions.push(el("button", { class: "btn", dataset: { action: "run-delegate" }, title: "Read-only review of the worktree by Antigravity", text: "Delegate review…" }));
   if (allowed.includes("retry")) actions.push(el("button", { class: "btn btn-primary", dataset: { action: "run-retry" }, title: "Start a new run from the same request", text: "Retry" }));
   if (allowed.includes("continue")) actions.push(el("button", { class: "btn", dataset: { action: "run-continue" }, title: "Start a new run from the same request plus a direction", text: "Continue…" }));
   if (allowed.includes("merge") && run.branch) actions.push(el("button", { class: "btn", dataset: { action: "run-merge" }, title: "Merge the run branch into the owner checkout", text: "Merge…" }));
@@ -2101,6 +2102,27 @@ function mergeResultBlock(result) {
 }
 
 Object.assign(ACTIONS, {
+  "run-delegate": (button) => {
+    const run = store.detail.run;
+    if (!run?.request_snapshot?.allow_antigravity) return;
+    const dialog = document.getElementById("delegate");
+    const form = dialog.querySelector("form");
+    document.getElementById("delegate-title").textContent = `Delegate a review of ${runLabel(run)}`;
+    formError(form, "");
+    dialog.showModal();
+    return act("delegate-catalog", button, async () => {
+      try {
+        const { models } = await api.get("/api/antigravity/models");
+        const select = form.elements.model;
+        const previous = select.value;
+        select.replaceChildren(...models.map((id) => el("option", { value: id, text: id })));
+        select.value = previous || (models.find((id) => id.includes("flash-low")) ?? models[0] ?? "");
+      } catch (error) {
+        formError(form, error.message);
+      }
+    });
+  },
+  "delegate-cancel": () => document.getElementById("delegate").close(),
   "run-reroute": (button) => {
     const run = store.detail.run;
     if (!run || !ACTIVE_STATUSES.has(run.status)) return;
@@ -2167,6 +2189,27 @@ Object.assign(ACTIONS, {
 });
 
 Object.assign(FORMS, {
+  delegate: (form, event) => {
+    const run = store.detail.run;
+    const objective = form.elements.objective.value.trim();
+    if (!run || !objective || !form.elements.model.value) return;
+    return act(`${run.id}:delegate`, event?.submitter, async () => {
+      formError(form, "Reviewing… this can take several minutes.");
+      try {
+        await api.post(`/api/runs/${run.id}/delegate`, { objective, model: form.elements.model.value, mode: "review" });
+        formError(form, "");
+        form.elements.objective.value = "";
+        document.getElementById("delegate").close();
+        toast("Review recorded; see the 🛰 row in Activity");
+      } catch (error) {
+        // 502 means the review ran and was recorded as a failure; the row explains it.
+        formError(form, error.status === 502 ? "Antigravity reported an error; the delegation row has the details." : error.message);
+        if (error.status === 502) document.getElementById("delegate").close();
+      }
+      store.snapshotsStale = true;
+      schedule(true);
+    });
+  },
   reroute: (form, event) => {
     const key = form.elements.route.value;
     if (!key) return;

@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import threading
+import time
 
 from orchestra import dsh
 
@@ -40,6 +42,21 @@ def catalog() -> list[str]:
     if result.returncode != 0 or not ids:
         raise ValueError(f"cannot list Antigravity models: {(result.stderr or result.stdout).strip()[:300] or 'no output'}")
     return ids
+
+
+_CATALOG_LOCK = threading.Lock()
+_CATALOG: tuple[float, list[str]] | None = None
+CATALOG_TTL = 300.0
+
+
+def cached_catalog(*, refresh: bool = False) -> list[str]:
+    """`agy models` spawns a process; serve the id list from a short cache."""
+    global _CATALOG
+    with _CATALOG_LOCK:
+        if not refresh and _CATALOG is not None and time.monotonic() - _CATALOG[0] < CATALOG_TTL:
+            return _CATALOG[1]
+        _CATALOG = (time.monotonic(), catalog())
+        return _CATALOG[1]
 
 
 def build_argv(objective: str, model: str, conversation_id: str | None = None) -> list[str]:
@@ -82,6 +99,9 @@ def record(objective: str, model: str, parsed: dict | None, *, status: str | Non
     usage = parsed.get("usage") or {}
     response = parsed.get("response")
     response = response if isinstance(response, str) else None
+    # Headless agy auto-denies tools it cannot prompt for and still reports SUCCESS with an empty response.
+    if status is None and error is None and parsed.get("status") == "SUCCESS" and not (response or "").strip() and "auto-denied" in stderr:
+        status, error = "DENIED", stderr.strip().splitlines()[-1][:STDERR_LIMIT]
     return {
         "model": model, "mode": "review", "objective": objective,
         "conversation_id": parsed.get("conversation_id") if isinstance(parsed.get("conversation_id"), str) else None,
@@ -100,7 +120,8 @@ def record(objective: str, model: str, parsed: dict | None, *, status: str | Non
 def delegate(objective: str, model: str, workdir: str, conversation_id: str | None = None) -> dict:
     argv = build_argv(objective, model, conversation_id)
     try:
-        result = subprocess.run(argv, cwd=workdir, env=build_env(), shell=False, capture_output=True, text=True, timeout=PROCESS_TIMEOUT)
+        result = subprocess.run(argv, cwd=workdir, env=build_env(), shell=False, capture_output=True, text=True,
+                                timeout=PROCESS_TIMEOUT, stdin=subprocess.DEVNULL)
     except subprocess.TimeoutExpired as exc:
         stdout = exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else exc.stdout or ""
         stderr = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else exc.stderr or ""

@@ -181,6 +181,19 @@
     </div>
   </form>
 </dialog>
+<dialog id="delegate" class="direct-dialog">
+  <form data-form="delegate">
+    <h2 id="delegate-title">Delegate a review</h2>
+    <p class="muted">Sends the run's worktree to Google's Antigravity for a read-only review; the findings return as a 🛰 row. This call blocks for up to ten minutes.</p>
+    <label>Model <select name="model" required></select></label>
+    <label>Objective <textarea name="objective" rows="3" required placeholder="What should the reviewer look for?"></textarea></label>
+    <p class="form-error" hidden></p>
+    <div class="dialog-buttons">
+      <button type="button" class="btn" data-action="delegate-cancel">Cancel</button>
+      <button type="submit" class="btn btn-primary">Delegate</button>
+    </div>
+  </form>
+</dialog>
 <!-- end slice2-routing dialogs -->
 
 <!-- slice2-evidence dialogs -->

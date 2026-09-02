@@ -79,6 +79,9 @@ def _reconcile(con, run_id: int, root: str | Path) -> dict:
                     or isinstance(source_seq, bool) or not isinstance(source_seq, int)
                     or source_seq < 0):
                 raise JournalError(f"malformed DSH event in {path} line {line_index + 1}")
+            if event_type.endswith("/chunk"):
+                # Stream fragments repeat the finished message and were 94% of stored events; the raw journal keeps them.
+                continue
             if not db.append_event(con, run_id, "dsh." + event_type, data,
                                    session_id=session_id, source_seq=source_seq):
                 continue

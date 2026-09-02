@@ -138,26 +138,20 @@ def cmd_artifact(args):
 
 
 def cmd_delegate(args):
-    from orchestra import antigravity
+    # The daemon runs agy (the worker's shell is sandboxed); this call blocks until the review returns.
     run_id = _run_id(args)
-    api = _client(args)
-    run = api.get(f"{API}/runs/{run_id}")["data"]
-    if not (run.get("request_snapshot") or {}).get("allow_antigravity"):
-        raise ValueError("Antigravity delegation is not authorized for this run; dispatch with --allow-antigravity")
-    if args.mode != "review":
-        raise ValueError("delegate --mode must be review")
-    if not run.get("workdir"):
-        raise ValueError("run has no worktree yet; delegation needs a working directory")
-    catalog = antigravity.catalog()
-    if args.model not in catalog:
-        raise ValueError(f"unknown Antigravity model {args.model!r}; available: {', '.join(catalog)}")
-    prior = api.get(f"{API}/runs/{run_id}/delegations")["data"]
-    conversation = prior[0].get("conversation_id") if prior else None
-    result = antigravity.delegate(args.objective, args.model, run["workdir"], conversation)
-    record = api.post(f"{API}/runs/{run_id}/delegations", result)["data"]
-    print(result["response"] if result["response"] is not None else "")
-    print(json.dumps({"delegation": {"model": result["model"], "conversation_id": result["conversation_id"], "status": result["status"], "tokens": record["delta"]["total"]}}), file=sys.stderr)
-    return 0 if result["status"] == "SUCCESS" else 1
+    api = client.Client(getattr(args, "url", None), timeout=720)
+    try:
+        record = api.post(f"{API}/runs/{run_id}/delegate", {"objective": args.objective, "model": args.model, "mode": args.mode})["data"]
+    except client.ClientError as exc:
+        # A failed review still answers 502 with the recorded delegation in the envelope.
+        data = exc.payload.get("data") if isinstance(exc.payload, dict) else None
+        if not isinstance(data, dict) or "status" not in data:
+            raise
+        record = data
+    print(record["response"] if record.get("response") is not None else "")
+    print(json.dumps({"delegation": {"model": record["model"], "conversation_id": record["conversation_id"], "status": record["status"], "tokens": record["delta"]["total"]}}), file=sys.stderr)
+    return 0 if record["status"] == "SUCCESS" else 1
 
 
 def cmd_attention(args):

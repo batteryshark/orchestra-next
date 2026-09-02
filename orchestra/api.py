@@ -6,7 +6,7 @@ import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 
-from orchestra import artifacts, attention, auth, child_runs, claude, db, dsh, groups, messaging, paths, profiles, runs, storage, worktree
+from orchestra import antigravity, artifacts, attention, auth, child_runs, claude, db, dsh, groups, messaging, paths, profiles, runs, storage, worktree
 from orchestra.contracts import ContractError, RunRequest
 
 PREFIX = "/api"
@@ -295,6 +295,31 @@ class API:
                     _need(identity, "artifact", target=run_id)
                     data = _body(body)
                     return Response(201, envelope(self.con, artifacts.publish(self.con, run_id, data.get("path", ""), name=data.get("name"))))
+            if suffix == ["delegate"] and method == "POST":
+                # The daemon runs agy itself: the worker's shell sits inside the DSH sandbox, which cannot exec it.
+                _need(identity, "delegate", target=run_id)
+                data = _body(body)
+                if not json.loads(run["request_snapshot"]).get("allow_antigravity"):
+                    raise Problem(403, "Antigravity delegation is not authorized for this run; dispatch with --allow-antigravity")
+                if data.get("mode", "review") != "review":
+                    raise Problem(400, "delegate mode must be review")
+                if not run["workdir"]:
+                    raise Problem(409, "run has no worktree yet; delegation needs a working directory")
+                objective = str(data.get("objective") or "").strip()
+                if not objective:
+                    raise Problem(400, "objective is required")
+                try:
+                    catalog = antigravity.cached_catalog()
+                except ValueError as exc:
+                    raise Problem(503, str(exc)) from exc
+                model = data.get("model")
+                if model not in catalog:
+                    raise Problem(400, f"unknown Antigravity model {model!r}; available: {', '.join(catalog)}")
+                prior = _delegations(self.con, run_id)
+                conversation = prior[0].get("conversation_id") if prior else None
+                result = antigravity.delegate(objective, model, run["workdir"], conversation)
+                record = _record_delegation(self.con, run, result, actor=_actor(identity))
+                return Response(201 if record["status"] == "SUCCESS" else 502, envelope(self.con, record))
             if suffix == ["delegations"]:
                 if method == "GET":
                     _need(identity, "read", target=run_id)
@@ -456,6 +481,12 @@ class API:
             models = [{"provider": provider, "model": model, "efforts": sorted(efforts)}
                       for (provider, model), efforts in sorted(choices.items())]
             return Response(200, envelope(self.con, {"models": models, "capabilities": {"native_web_search": dsh.web_search_capability()}, "checked_at": checked_at}))
+        if parts == ["antigravity", "models"] and method == "GET":
+            _need(identity, "read")
+            try:
+                return Response(200, envelope(self.con, {"models": antigravity.cached_catalog(refresh=query.get("refresh") == "1")}))
+            except ValueError as exc:
+                raise Problem(503, str(exc)) from exc
         if parts == ["readiness"] and method == "GET":
             _need(identity, "read")
             def probe(fn):
