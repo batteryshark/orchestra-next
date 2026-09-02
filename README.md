@@ -103,3 +103,5 @@ See [DESIGN.md](DESIGN.md) for ownership boundaries,
 [docs/API.md](docs/API.md) for the public surface,
 [docs/CONSOLE.md](docs/CONSOLE.md) for the operator console maintainer notes, and
 [docs/UI_PROPOSAL.md](docs/UI_PROPOSAL.md) for the proposed operator interface.
+The [Antigravity delegation spike](docs/ANTIGRAVITY_SPIKE.md) records the
+evaluated official-CLI integration boundary.
