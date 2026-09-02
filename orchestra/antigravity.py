@@ -17,8 +17,8 @@ RESPONSE_STDOUT_LIMIT = 32_000
 RESPONSE_STORED_LIMIT = 8_000
 STDERR_LIMIT = 2_000
 CATALOG_TIMEOUT = 60
-PRINT_TIMEOUT = "10m"
-PROCESS_TIMEOUT = 660
+PRINT_TIMEOUT = "4m"
+PROCESS_TIMEOUT = 270
 SCRUBBED = ("GEMINI_API_KEY", "GOOGLE_API_KEY")  # a subscription route must never become API billing
 PROMPT_PREFIX = ("You are reviewing the repository in the current working directory for another agent. "
                  "Do not modify any file. Answer with findings and recommendations only.\n\n")
@@ -103,8 +103,11 @@ def record(objective: str, model: str, parsed: dict | None, *, status: str | Non
     response = parsed.get("response")
     response = response if isinstance(response, str) else None
     # Headless agy auto-denies tools it cannot prompt for and still reports SUCCESS with an empty response.
-    if status is None and error is None and parsed.get("status") == "SUCCESS" and not (response or "").strip() and "auto-denied" in stderr:
-        status, error = "DENIED", stderr.strip().splitlines()[-1][:STDERR_LIMIT]
+    if status is None and error is None and parsed.get("status") == "SUCCESS" and not (response or "").strip():
+        if "auto-denied" in stderr:
+            status, error = "DENIED", stderr.strip().splitlines()[-1][:STDERR_LIMIT]
+        else:
+            status, error = "EMPTY", "agy reported success but returned no response text"
     return {
         "model": model, "mode": "review", "objective": objective,
         "conversation_id": parsed.get("conversation_id") if isinstance(parsed.get("conversation_id"), str) else None,
@@ -123,8 +126,9 @@ def record(objective: str, model: str, parsed: dict | None, *, status: str | Non
 def delegate(objective: str, model: str, workdir: str, conversation_id: str | None = None) -> dict:
     argv = build_argv(objective, model, conversation_id, workdir)
     try:
+        # Own session: under the daemon (no controlling terminal) print mode otherwise waits for idle until its timeout.
         result = subprocess.run(argv, cwd=workdir, env=build_env(), shell=False, capture_output=True, text=True,
-                                timeout=PROCESS_TIMEOUT, stdin=subprocess.DEVNULL)
+                                timeout=PROCESS_TIMEOUT, stdin=subprocess.DEVNULL, start_new_session=True)
     except subprocess.TimeoutExpired as exc:
         stdout = exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else exc.stdout or ""
         stderr = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else exc.stderr or ""

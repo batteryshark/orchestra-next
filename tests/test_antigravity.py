@@ -104,19 +104,23 @@ class DelegateBridgeTests(AntigravityCase):
         self.assertEqual(len(usage), 1)
         self.assertEqual((usage[0]["provider"], usage[0]["event_type"], usage[0]["total_tokens"], usage[0]["source_seq"]), ("antigravity", "antigravity.delegate", 1010, 1))
         self.assertEqual(usage[0]["session_id"], summary["conversation_id"])
-        # Second turn: same conversation, cumulative usage from the CLI, delta stored.
+        # Second delegation: a fresh conversation, so the delta equals the turn's usage again.
         code, out, err = self.delegate("second look", "--model", "gemini-3.8-flash-low")
         self.assertEqual(code, 0, err)
-        self.assertIn("turn 2", out)
+        self.assertIn("turn 1", out)
         events, usage = self.rows(run_id)
-        self.assertEqual(events[1]["conversation_id"], events[0]["conversation_id"])
-        self.assertEqual(events[1]["usage"]["total"], 2020)
-        self.assertEqual(events[1]["delta"], {"input": 1000, "output": 10, "thinking": 0, "cache_read": 0, "total": 1010})
+        self.assertNotEqual(events[1]["conversation_id"], events[0]["conversation_id"])
+        self.assertEqual(events[1]["delta"], events[1]["usage"])
         self.assertEqual([row["total_tokens"] for row in usage], [1010, 1010])
         self.assertEqual(json.loads(err.strip().splitlines()[-1])["delegation"]["tokens"], 1010)
         self.assertEqual(runs.find(self.con, run_id)["tokens_total"], before)
-        listing = [row["source_seq"] for row in usage]
-        self.assertEqual(listing, [1, 2])
+        # Cumulative accounting still holds when a conversation is continued explicitly.
+        continued = antigravity.record("o", "m", {"conversation_id": events[0]["conversation_id"], "status": "SUCCESS", "response": "more", "num_turns": 2,
+                                                 "usage": {"input_tokens": 2000, "output_tokens": 20, "total_tokens": 2020}})
+        from orchestra import api as api_module, db
+        stored = api_module._record_delegation(self.con, runs.find(self.con, run_id), continued, actor="test")
+        self.assertEqual(stored["delta"]["total"], 1010)
+        self.assertEqual(self.con.execute("SELECT total_tokens FROM usage_events WHERE session_id=? AND source_seq=2", (events[0]["conversation_id"],)).fetchone()[0], 1010)
 
     def test_error_mode_records_error_and_exits_1(self):
         run_id = self.run_with("bad", allow=True)
@@ -176,6 +180,8 @@ class DriverTests(unittest.TestCase):
         self.assertIn("auto-denied", denied["error"])
         fine = antigravity.record("o", "m", {"response": "findings", "status": "SUCCESS", "usage": {}}, stderr=hint)
         self.assertEqual(fine["status"], "SUCCESS")
+        empty = antigravity.record("o", "m", {"response": "", "status": "SUCCESS", "usage": {}})
+        self.assertEqual(empty["status"], "EMPTY")
 
     def test_contract_rejects_non_boolean(self):
         with self.assertRaises(ContractError):

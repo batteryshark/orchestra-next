@@ -315,9 +315,8 @@ class API:
                 model = data.get("model")
                 if model not in catalog:
                     raise Problem(400, f"unknown Antigravity model {model!r}; available: {', '.join(catalog)}")
-                prior = _delegations(self.con, run_id)
-                conversation = prior[0].get("conversation_id") if prior else None
-                result = antigravity.delegate(objective, model, run["workdir"], conversation)
+                # Each review is a fresh conversation: resumed ones gave empty answers and earn no cache credit.
+                result = antigravity.delegate(objective, model, run["workdir"], None)
                 record = _record_delegation(self.con, run, result, actor=_actor(identity))
                 return Response(201 if record["status"] == "SUCCESS" else 502, envelope(self.con, record))
             if suffix == ["delegations"]:
