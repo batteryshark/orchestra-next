@@ -29,7 +29,7 @@
 
 <section id="view-fleet" aria-label="Fleet">
   <div class="fleet-top">
-    <div id="counts" class="counts" role="group" aria-label="Status filters"><span id="counts-scope" class="muted" hidden>in view</span></div>
+    <div id="counts" class="counts" role="group" aria-label="Status filters"><span id="counts-scope" class="muted" hidden>in view</span><span id="scheduler-paused" class="chip warn" hidden>Scheduler paused</span></div>
     <details id="new-run" class="new-run">
       <summary class="btn btn-primary">New run</summary>
       <form data-form="dispatch" class="dispatch">
@@ -133,7 +133,16 @@
   <!-- /config-tab:audit -->
   <!-- config-tab:settings -->
   <section id="config-settings" data-ctab="settings" role="tabpanel" hidden>
-    <p class="muted">Coming soon</p>
+    <h3 class="config-sub">Scheduler</h3>
+    <div id="scheduler-state" class="admin-form"></div>
+    <h3 class="config-sub">Limits</h3>
+    <form data-form="settings" class="admin-form">
+      <label>Max active runs <input name="max_active_runs" type="number" min="1" step="1" required></label>
+      <label>Max children per run <input name="max_children_per_run" type="number" min="1" step="1" required></label>
+      <label>Max child depth <input name="max_child_depth" type="number" min="1" step="1" required></label>
+      <button type="submit" class="btn btn-primary">Save</button>
+      <p class="form-error" hidden></p>
+    </form>
   </section>
   <!-- /config-tab:settings -->
   <!-- config-tab:logs -->

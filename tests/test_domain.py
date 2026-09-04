@@ -2,7 +2,7 @@ import json
 import os
 import unittest
 
-from orchestra import artifacts, attention, auth, child_runs, messaging, runs, scheduler
+from orchestra import artifacts, attention, auth, child_runs, messaging, runs, scheduler, settings
 from orchestra.contracts import RunRequest
 from tests.common import StateCase
 
@@ -35,6 +35,22 @@ class DomainTests(StateCase):
         self.assertNotIn(second["id"], admitted["admitted"])
         self.con.execute("UPDATE runs SET status='completed' WHERE id=?", (first["id"],)); self.con.commit()
         self.assertIn(second["id"], scheduler.admit(self.con)["admitted"])
+
+    def test_paused_scheduler_admits_nothing_and_resume_admits_again(self):
+        run, _ = runs.submit(self.con, self.request("held"))
+        settings.set_paused(self.con, True, actor="test")
+        self.assertEqual(scheduler.admit(self.con), {"admitted": [], "skipped": []})
+        settings.set_paused(self.con, False, actor="test")
+        self.assertEqual(scheduler.admit(self.con)["admitted"], [run["id"]])
+
+    def test_max_active_runs_setting_bounds_admission(self):
+        ids = [runs.submit(self.con, self.request(f"r{index}"))[0]["id"] for index in range(3)]
+        settings.update(self.con, {"max_active_runs": 2}, expected_revision=settings.revision(self.con), actor="test")
+        self.assertEqual(scheduler.admit(self.con)["admitted"], ids[:2])
+        self.con.execute("UPDATE runs SET status='running' WHERE id IN (?,?)", ids[:2]); self.con.commit()
+        self.assertEqual(scheduler.admit(self.con)["admitted"], [])
+        settings.update(self.con, {"max_active_runs": 3}, expected_revision=settings.revision(self.con), actor="test")
+        self.assertEqual(scheduler.admit(self.con)["admitted"], [ids[2]])
 
     def test_raw_auth_scopes_and_terminal_revocation(self):
         run, _ = runs.submit(self.con, self.request("auth"))

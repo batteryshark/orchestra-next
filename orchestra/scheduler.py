@@ -1,9 +1,7 @@
 """Dependency and concurrency admission for durable runs."""
 from __future__ import annotations
 
-from orchestra import db
-
-DEFAULT_CONCURRENCY = 4
+from orchestra import db, settings
 
 
 def _dependency_state(con, run_id: int) -> str:
@@ -18,7 +16,10 @@ def _dependency_state(con, run_id: int) -> str:
     return "ready"
 
 
-def admit(con, *, limit=DEFAULT_CONCURRENCY) -> dict:
+def admit(con, *, limit=None) -> dict:
+    if settings.get(con, "paused"):
+        return {"admitted": [], "skipped": []}
+    limit = limit or settings.get(con, "max_active_runs")
     active = int(con.execute("SELECT COUNT(*) FROM runs WHERE status IN ('starting','running')").fetchone()[0])
     admitted, skipped = [], []
     if active >= limit:

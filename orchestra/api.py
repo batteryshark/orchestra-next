@@ -6,7 +6,7 @@ import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 
-from orchestra import antigravity, artifacts, attention, auth, child_runs, claude, db, dsh, groups, messaging, paths, profiles, runs, storage, worktree
+from orchestra import antigravity, artifacts, attention, auth, child_runs, claude, db, dsh, groups, messaging, paths, profiles, runs, settings, storage, worktree
 from orchestra.contracts import ContractError, RunRequest
 
 PREFIX = "/api"
@@ -378,6 +378,30 @@ class API:
                 raise Problem(409, str(exc)) from exc
             return Response(200, envelope(self.con, profiles.payload(row)))
 
+        if parts == ["settings"]:
+            if method == "GET":
+                _need(identity, "read")
+                return Response(200, envelope(self.con, settings.payload(self.con)))
+            if method == "PATCH":
+                _operator(identity)
+                data = _body(body).copy()
+                try:
+                    revision = int(data.pop("expected_revision"))
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise Problem(400, "expected_revision is required") from exc
+                try:
+                    settings.update(self.con, data, expected_revision=revision, actor=_actor(identity))
+                except ValueError as exc:
+                    raise Problem(400, str(exc)) from exc
+                except RuntimeError as exc:
+                    raise Problem(409, str(exc)) from exc
+                return Response(200, envelope(self.con, settings.payload(self.con)))
+        if len(parts) == 2 and parts[0] == "scheduler" and parts[1] in ("pause", "resume") and method == "POST":
+            _operator(identity)
+            note = _body(body).get("note")
+            settings.set_paused(self.con, parts[1] == "pause", actor=_actor(identity), note=None if note is None else str(note)[:500])
+            return Response(200, envelope(self.con, settings.payload(self.con)))
+
         if parts == ["groups"]:
             if method == "GET":
                 _need(identity, "read")
@@ -561,4 +585,4 @@ class API:
 
 
 def openapi() -> dict:
-    return {"openapi": "3.1.0", "info": {"title": "Orchestra-next API", "version": "1"}, "servers": [{"url": "http://127.0.0.1:8766/api"}], "paths": {"/runs": {}, "/profiles": {}, "/groups": {}, "/attention": {}, "/storage": {}}}
+    return {"openapi": "3.1.0", "info": {"title": "Orchestra-next API", "version": "1"}, "servers": [{"url": "http://127.0.0.1:8766/api"}], "paths": {"/runs": {}, "/profiles": {}, "/groups": {}, "/settings": {}, "/scheduler/pause": {}, "/scheduler/resume": {}, "/attention": {}, "/storage": {}}}

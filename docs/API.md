@@ -30,6 +30,9 @@ GET|POST  /api/profiles
 PATCH     /api/profiles/{id-or-slug}
 GET|POST  /api/groups
 PATCH     /api/groups/{id-or-slug}
+GET|PATCH /api/settings
+POST      /api/scheduler/pause
+POST      /api/scheduler/resume
 GET       /api/attention
 POST      /api/attention/{id}/lease
 POST      /api/attention/{id}/answer
@@ -46,6 +49,16 @@ POST      /api/storage/plans/{id}/apply
 List/feed endpoints accept an `after` cursor where applicable; `/api/runs`, `/api/events`, and `/api/runs/{id}/events` also take `order=asc|desc`, `limit` (runs 1..200, events 1..500), and a `before` cursor (`id < before`) for paging backwards. The usage feed contains raw token facts only.
 
 `pause` parks the run at the next safe boundary: the current step is cancelled, the worktree is checkpointed, the DSH process stops, and capacity is released. The run reports `status: waiting` with a null `waiting_kind`, a `waiting_detail` beginning with `paused`, and `paused: true` in its payload. `resume` continues the same session.
+
+## Fleet settings
+
+`GET /api/settings` returns `{settings, revision, scheduler}`. `settings` holds `max_active_runs` (default 4; the fleet-wide admission limit), `max_children_per_run` (default 100), `max_child_depth` (default 3), and `paused` (default false). `scheduler` reports `{paused, queued, running, capacity}` where `capacity = max_active_runs - running`.
+
+`PATCH /api/settings` (operator only) takes `expected_revision` and any subset of the fields. Integers must be `>= 1`, `paused` must be a boolean; violations answer `400`. A stale `expected_revision` answers `409`. Every change is a `settings.update` control event.
+
+`POST /api/scheduler/pause` and `POST /api/scheduler/resume` (operator only) flip `paused` with an optional `{note}` and answer the same payload as `GET /api/settings`. While paused the scheduler admits no queued run; running runs continue. Control events: `scheduler.pause`, `scheduler.resume`.
+
+CLI: `orchestra-next settings [list | set <key> <value>]`, `orchestra-next pause [note]`, `orchestra-next resume-scheduler [note]` (`resume` addresses a single run).
 
 ## Run request
 
