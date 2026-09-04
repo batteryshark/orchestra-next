@@ -7,7 +7,7 @@ import os
 import sys
 import uuid
 
-from orchestra import auth, claude, client, config, daemon, db, dsh, paths, supervise
+from orchestra import auth, claude, client, config, daemon, db, dsh, paths, service, supervise
 
 API = "/api"
 
@@ -220,8 +220,12 @@ def build_parser():
     lease = att_sub.add_parser("lease"); lease.add_argument("attention_id"); lease.add_argument("--seconds", type=int, default=60); lease.set_defaults(func=cmd_attention)
     answer = att_sub.add_parser("answer"); answer.add_argument("attention_id"); answer.add_argument("answer"); answer.add_argument("--lease-id"); answer.set_defaults(func=cmd_attention)
     pair = sub.add_parser("pair"); pair.set_defaults(func=cmd_pair)
-    service = sub.add_parser("service-token"); service.add_argument("name"); service.add_argument("authorities", nargs="+"); service.set_defaults(func=cmd_service)
+    token = sub.add_parser("service-token"); token.add_argument("name"); token.add_argument("authorities", nargs="+"); token.set_defaults(func=cmd_service)
     storage_parser = sub.add_parser("storage"); storage_parser.set_defaults(func=cmd_list)
+    svc = sub.add_parser("service", help="launchd LaunchAgent for the daemon (macOS)"); svc_sub = svc.add_subparsers(dest="action", required=True)
+    svc_install = svc_sub.add_parser("install"); svc_install.add_argument("--start", action="store_true"); svc_install.set_defaults(func=service.main)
+    for name in ("uninstall", "status", "restart"):
+        svc_sub.add_parser(name).set_defaults(func=service.main)
     return parser
 
 

@@ -68,6 +68,19 @@ The daemon listens on `127.0.0.1:8766`; the API prefix is `/api`. The operator c
 
 The console is three static files under `orchestra/ui/` with no build step. It covers fleet status and dispatch, run activity with tell, interrupt, pause, resume, and stop, the attention inbox, Git changes, raw token usage, and run evidence. Keyboard: `/` filter, `j`/`k` move, `Enter` open, `t` direct a run, `1`–`5` run sections, `Esc` back.
 
+## Run as a service
+
+On macOS, `orchestra-next service` manages a per-user launchd LaunchAgent (`local.orchestra-next.daemon`) that runs `python -m orchestra daemon` at login and restarts it if it exits:
+
+```sh
+orchestra-next service install --start   # write the plist, load it, start now
+orchestra-next service status            # JSON: installed, loaded, state, pid
+orchestra-next service restart           # launchctl kickstart -k
+orchestra-next service uninstall         # bootout and remove the plist
+```
+
+The plist lives at `~/Library/LaunchAgents/local.orchestra-next.daemon.plist`. It runs the interpreter that ran `install`, from the repo root, with your current `PATH` so `dsh`, `agy`, `claude`, and `codex` resolve. Both streams log to `~/.orchestra-next/logs/daemon.log`. `install` refuses to run while a foreground `orchestra-next daemon` is running. Other platforms exit 1.
+
 ## Run behavior
 
 A goal run must create a DSH goal before substantive work. DSH drives continuation rounds inside the same process and session. Orchestra-next reconciles the session JSONL by `(session_id, seq)`, including goal state, rounds, messages, tool lifecycle, compaction, and exact input/output/cache token facts.
