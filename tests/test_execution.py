@@ -111,6 +111,17 @@ class ExecutionTests(StateCase):
         self.assertEqual(done["status"], "completed")
         self.assertEqual(done["dsh_session_id"], session_id)
 
+    def test_terminal_run_marks_queued_messages_undeliverable(self):
+        run = self.submit("late")
+        messaging.queue(self.con, run["id"], kind="tell", body="too late", sender="device:test")
+        evidence = {"end_ref": None, "before": None, "diff_stat": None}
+        with mock.patch.object(supervise, "_checkpoint", return_value=evidence):
+            supervise._finish(self.con, run["id"], "failed", self.repo, error="boom")
+        self.assertEqual([row["status"] for row in messaging.thread(self.con, run["id"])], ["undeliverable"])
+        self.assertEqual([row["status"] for row in messaging.ledger(self.con, status="undeliverable")], ["undeliverable"])
+        with self.assertRaises(messaging.RunClosed):
+            messaging.queue(self.con, run["id"], kind="tell", body="after", sender="device:test")
+
     def test_permission_timeout_rejects_and_releases_process(self):
         os.environ["FAKE_DSH_MODE"] = "permission"
         run = self.submit("permission-timeout")

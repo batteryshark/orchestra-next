@@ -272,6 +272,12 @@
     padding: var(--sp-2) var(--sp-4); cursor: pointer; color: var(--muted); white-space: nowrap;
   }
   .run-tabs button[aria-selected="true"], #config-tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+  .run-tabs a { display: inline-block; border-bottom: 2px solid transparent; padding: var(--sp-2) var(--sp-4); color: var(--muted); white-space: nowrap; text-decoration: none; }
+  .run-tabs a[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+  .table-scroll { overflow-x: auto; }
+  table.outbox td { vertical-align: top; white-space: nowrap; }
+  table.outbox td.outbox-body { white-space: normal; overflow-wrap: anywhere; min-width: 16em; }
+  table.outbox .kind-glyph { margin-right: var(--sp-2); }
 
   #sec-activity { display: flex; flex-direction: column; height: calc(100dvh - 270px); min-height: 20em; position: relative; }
   .feed-toolbar { display: flex; gap: var(--sp-4); font-size: var(--fs-s); color: var(--muted); margin-bottom: var(--sp-2); }

@@ -31,6 +31,7 @@ GET|POST  /api/profiles
 PATCH     /api/profiles/{id-or-slug}
 GET|POST  /api/groups
 PATCH     /api/groups/{id-or-slug}
+GET       /api/messages
 GET       /api/attention
 POST      /api/attention/{id}/lease
 POST      /api/attention/{id}/answer
@@ -110,3 +111,9 @@ The bootstrap file may declare networks whose peers are operators without a toke
 `trust_tailnet` trusts the Tailscale address ranges (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`). `trust_loopback` trusts local processes, which fits a `tailscale serve` proxy. `trusted_cidrs` adds explicit ranges. All default to off; pairing then remains the only browser path. A trusted peer appears as identity kind `network` with full operator authority, so tailnet ACLs are the access control. Requests from trusted peers still pass the Host allowlist (loopback, the bind address, `*.ts.net`, `allowed_hosts`, and trusted-range IP literals), and a browser mutation from a trusted peer must carry a same-origin `Origin` header; clients that send no `Origin`, such as curl, pass. Trust applies only to requests that present no credential: a revoked or invalid bearer from a trusted peer is refused. A process on the daemon's own host that connects through a trusted LAN or tailnet address is not a trusted peer; only `trust_loopback` vouches for local processes, and with it every local process — including a run's own shell — holds operator authority.
 
 `worker_env` (default `[]`) restricts the environment passed to DSH workers and verifiers to the listed names or `PREFIX_*` patterns, plus `ORCHESTRA_NEXT_*`, `DSH_*`, `PATH`, `HOME`, `TMPDIR`, `LANG`, `LC_*`, `TZ`, and `TERM`. An empty list inherits the daemon's whole environment.
+
+## Messages ledger
+
+`GET /api/messages` lists every operator→run control across the fleet, newest first. Query: `status` (`queued`, `delivered`, `undeliverable`), `kind` (`tell`, `interrupt`, `pause`, `resume`, `reroute`, `stop`), `run` (run id), `limit` (1..200, default 200), `before` (the `id` cursor of the last row on the previous page). Each row carries `id`, `message_id`, `run_id`, `run_title`, `sender`, `kind`, `status`, `body` (first 200 characters; the inner text for reroute payloads), `created_at`, `delivered_at`.
+
+A message is `queued` until the supervisor claims it at a process boundary (`delivered`, with `delivered_at`). When a run reaches a terminal state with queued messages, they become `undeliverable`.

@@ -180,6 +180,7 @@ def _finish(con, run_id: int, status: str, workdir_path: Path, *, summary=None, 
     stamp = db.now()
     with con:
         con.execute("UPDATE runs SET status=?,waiting_kind=NULL,waiting_detail=NULL,end_ref=?,git_status=?,git_diff_stat=?,summary=?,error=?,dsh_pid=NULL,finished_at=?,updated_at=?,revision=revision+1 WHERE id=?", (status, evidence["end_ref"], evidence["before"], evidence["diff_stat"], summary, error, stamp, stamp, run_id))
+        messaging.close_pending(con, run_id)
         db.append_event(con, run_id, "run.terminal", {"status": status, "end_ref": evidence["end_ref"]})
         db.record_control(con, actor="orchestra", action="run.finish", outcome=status, target_type="run", target_id=run_id)
     callbacks.emit(config.callback_command(), "run.terminal", {"run_id": run_id, "status": status}, audit_db=con)

@@ -53,6 +53,16 @@ class DocumentConformanceTests(unittest.TestCase):
         for form in forms:
             self.assertIn(f"{form}:", self.js, f"FORMS is missing {form}")
 
+    def test_attention_has_a_messages_subtab(self):
+        self.assertIn('href="#/attention/messages"', self.html)
+        self.assertIn('data-att-tab="messages"', self.html)
+        for marker in ('id="outbox-rows"', 'data-outbox-filter="status"', 'data-outbox-filter="kind"',
+                       'data-action="outbox-older"', 'id="outbox-undeliverable"'):
+            self.assertIn(marker, self.html, marker)
+        self.assertIn("// --- outbox ---", self.js)
+        self.assertIn('"outbox-older"', self.js)
+        self.assertIn('section: segments[1] === "messages"', self.js)
+
     def test_local_storage_access_is_guarded(self):
         """Every `localStorage` use sits inside a `try`, so a blocked store cannot break the page.
 

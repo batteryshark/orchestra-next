@@ -215,6 +215,21 @@ class API:
                     raise Problem(400, str(exc)) from exc
                 return Response(201 if created else 200, envelope(self.con, runs.payload(run, detail=True)))
 
+        if parts == ["messages"] and method == "GET":
+            _need(identity, "read")
+            status, kind = query.get("status") or None, query.get("kind") or None
+            if status and status not in messaging.STATUSES:
+                raise Problem(400, "status must be one of " + ", ".join(messaging.STATUSES))
+            if kind and kind not in messaging.KINDS:
+                raise Problem(400, "kind must be one of " + ", ".join(messaging.KINDS))
+            try:
+                run_id = int(query.get("run", 0) or 0)
+                before = int(query.get("before", 0) or 0)
+                limit = max(1, min(int(query.get("limit", 200) or 200), 200))
+            except ValueError as exc:
+                raise Problem(400, "run, before, and limit must be integers") from exc
+            return Response(200, envelope(self.con, messaging.ledger(self.con, status=status, kind=kind, run_id=run_id, before=before, limit=limit)))
+
         if len(parts) >= 2 and parts[0] == "runs":
             run_id = _id(parts[1])
             run = runs.find(self.con, run_id)
@@ -574,4 +589,4 @@ class API:
 
 
 def openapi() -> dict:
-    return {"openapi": "3.1.0", "info": {"title": "Orchestra-next API", "version": "1"}, "servers": [{"url": "http://127.0.0.1:8766/api"}], "paths": {"/runs": {}, "/profiles": {}, "/groups": {}, "/attention": {}, "/storage": {}}}
+    return {"openapi": "3.1.0", "info": {"title": "Orchestra-next API", "version": "1"}, "servers": [{"url": "http://127.0.0.1:8766/api"}], "paths": {"/runs": {}, "/messages": {}, "/profiles": {}, "/groups": {}, "/attention": {}, "/storage": {}}}
