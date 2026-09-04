@@ -181,6 +181,24 @@ def cmd_service(args):
     _print(_client(args).post(API + "/auth/service-tokens", {"name": args.name, "authorities": args.authorities}))
 
 
+def cmd_settings(args):
+    api = _client(args)
+    if args.action == "set":
+        try:
+            value = json.loads(args.value)
+        except json.JSONDecodeError:
+            value = args.value
+        revision = api.get(API + "/settings")["data"]["revision"]
+        _print(api.patch(API + "/settings", {"expected_revision": revision, args.key: value}))
+    else:
+        _print(api.get(API + "/settings"))
+
+
+def cmd_scheduler(args):
+    verb = "pause" if args.command == "pause" else "resume"
+    _print(_client(args).post(f"{API}/scheduler/{verb}", {"note": args.note}))
+
+
 def cmd_backup(args):
     _print(backup.backup(args.dest))
 
@@ -235,6 +253,12 @@ def build_parser():
     svc_install = svc_sub.add_parser("install"); svc_install.add_argument("--start", action="store_true"); svc_install.set_defaults(func=service.main)
     for name in ("uninstall", "status", "restart"):
         svc_sub.add_parser(name).set_defaults(func=service.main)
+    settings_parser = sub.add_parser("settings", help="fleet settings"); settings_sub = settings_parser.add_subparsers(dest="action")
+    settings_sub.add_parser("list").set_defaults(func=cmd_settings)
+    settings_set = settings_sub.add_parser("set"); settings_set.add_argument("key"); settings_set.add_argument("value"); settings_set.set_defaults(func=cmd_settings)
+    settings_parser.set_defaults(func=cmd_settings, action="list")
+    for name in ("pause", "resume-scheduler"):
+        item = sub.add_parser(name, help="pause or resume fleet admission; running runs continue"); item.add_argument("note", nargs="?"); item.set_defaults(func=cmd_scheduler)
     bak = sub.add_parser("backup"); bak.add_argument("dest", nargs="?"); bak.set_defaults(func=cmd_backup)
     res = sub.add_parser("restore"); res.add_argument("backup"); res.add_argument("--apply", action="store_true"); res.set_defaults(func=cmd_restore)
     return parser

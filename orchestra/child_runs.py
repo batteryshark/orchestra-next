@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from orchestra import db, profiles, runs
+from orchestra import db, profiles, runs, settings
 from orchestra.contracts import RunRequest, child_tier_allowed
 
 
@@ -23,13 +23,24 @@ def _cap(requested, inherited, limit):
     return min(requested, limit)
 
 
+def _depth(con, run) -> int:
+    """Number of parent links above `run`; a root run has depth 0."""
+    depth = 0
+    while run and run["parent_run_id"] is not None:
+        run = runs.find(con, run["parent_run_id"])
+        depth += 1
+    return depth
+
+
 def create(con, parent_run_id: int, value: dict, *, actor="run"):
     parent = runs.find(con, parent_run_id)
     if parent is None or parent["status"] in db.RUN_TERMINAL:
         raise DelegationError("parent run is not active")
     existing = int(con.execute("SELECT COUNT(*) FROM runs WHERE parent_run_id=?", (parent_run_id,)).fetchone()[0])
-    if parent["max_children"] is not None and existing >= parent["max_children"]:
+    if existing >= min(filter(None, (settings.get(con, "max_children_per_run"), parent["max_children"]))):
         raise DelegationError("parent run reached max_children")
+    if _depth(con, parent) >= settings.get(con, "max_child_depth"):
+        raise DelegationError("child run would exceed max_child_depth")
     profile = profiles.find(con, value.get("profile", ""))
     parent_profile = json.loads(parent["profile_snapshot"])
     if profile is None or not child_tier_allowed(int(parent_profile["tier"]), int(profile["tier"]), parent["max_child_tier"]):

@@ -575,6 +575,7 @@ const store = {
   profiles: [],
   groups: [],
   readiness: null,
+  settings: null, // GET /api/settings: {settings, revision, scheduler}
   route: { view: "fleet", runId: null, section: "activity" },
   detail: {
     id: null,
@@ -848,7 +849,7 @@ async function refreshSnapshots() {
     store.runs.clear();
     store.runsWindow = { signature, floor: null, exhausted: false };
   }
-  const [runs, attention, profiles, groups] = await Promise.all([
+  const [runs, attention, profiles, groups, settings] = await Promise.all([
     api.get(`/api/runs?${signature}`).catch((error) => {
       // A restored group/profile id can point at a record that no longer exists; drop it rather than 400 every tick.
       if (!(error instanceof ApiError) || error.status !== 400 || !(store.filters.group || store.filters.profile)) throw error;
@@ -861,7 +862,9 @@ async function refreshSnapshots() {
     api.get("/api/attention?status=open"),
     api.get("/api/profiles"),
     api.get("/api/groups"),
+    api.get("/api/settings"),
   ]);
+  store.settings = settings;
   for (const run of runs) store.runs.set(run.id, run);
   if (runs.length) {
     const floor = runs[runs.length - 1].id;
@@ -1267,6 +1270,7 @@ function renderFleet() {
       node.setAttribute("aria-pressed", String(pressed(entry)));
     });
   document.getElementById("counts-scope").hidden = runsQuery(store.filters) === runsQuery({ status: new Set() });
+  document.getElementById("scheduler-paused").hidden = !store.settings?.scheduler.paused;
 
   const visible = filterRuns(runs, store.filters);
   const state = document.getElementById("fleet-state");
@@ -2925,9 +2929,78 @@ function renderConfigIdentitiesTab() {
 // /config-tab:identities
 
 // config-tab:settings
+// settings
+const SETTINGS_FIELDS = ["max_active_runs", "max_children_per_run", "max_child_depth"];
+
 function renderConfigSettings() {
-  // Shell: the Settings tab is static until its feature lands here.
+  const data = store.settings;
+  const state = document.getElementById("scheduler-state");
+  const form = document.querySelector("form[data-form=settings]");
+  if (!data) {
+    state.replaceChildren(el("p", { class: "view-state", text: "Loading settings…" }));
+    return;
+  }
+  const s = data.scheduler;
+  state.replaceChildren(
+    el("span", { class: s.paused ? "chip warn" : "chip good", text: s.paused ? "Paused" : "Active" }),
+    el("span", { class: "muted", text: `${s.running} running · ${s.queued} queued · ${s.capacity} free of ${data.settings.max_active_runs}` }),
+    s.paused
+      ? el("button", { class: "btn btn-primary", dataset: { action: "scheduler-resume" }, text: "Resume" })
+      : el("button", { class: "btn", dataset: { action: "scheduler-pause" }, text: "Pause" }));
+  // Refill the fields only when the server revision moved, so typed edits survive polls.
+  if (form._revision !== data.revision) {
+    form._revision = data.revision;
+    for (const key of SETTINGS_FIELDS) form.elements[key].value = data.settings[key];
+  }
 }
+
+async function schedulerVerb(verb, button) {
+  const note = await confirmDialog({
+    title: verb === "pause" ? "Pause the scheduler?" : "Resume the scheduler?",
+    body: verb === "pause" ? "No queued run starts until you resume. Running runs continue." : "Queued runs are admitted again up to the active limit.",
+    confirmLabel: verb === "pause" ? "Pause" : "Resume",
+    danger: verb === "pause",
+    input: "Note (optional)",
+  });
+  if (note === false) return;
+  await act(`scheduler:${verb}`, button, async () => {
+    try {
+      store.settings = await api.post(`/api/scheduler/${verb}`, { note: note || null });
+      toast(verb === "pause" ? "Scheduler paused" : "Scheduler resumed");
+      markDirty("config", "fleet");
+    } catch (error) {
+      formError(document.querySelector("form[data-form=settings]"), error.message);
+    }
+  });
+}
+
+Object.assign(ACTIONS, {
+  "scheduler-pause": (button) => schedulerVerb("pause", button),
+  "scheduler-resume": (button) => schedulerVerb("resume", button),
+});
+
+Object.assign(FORMS, {
+  settings: (form) => act("settings", form.querySelector("button[type=submit]"), async () => {
+    const body = { expected_revision: store.settings?.revision };
+    for (const key of SETTINGS_FIELDS) body[key] = Number(form.elements[key].value);
+    try {
+      store.settings = await api.patch("/api/settings", body);
+      formError(form, "");
+      toast("Settings saved");
+      markDirty("config", "fleet");
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        formError(form, "Settings changed since read, reloading.");
+        store.settings = await api.get("/api/settings").catch(() => store.settings);
+        form._revision = null;
+        markDirty("config");
+      } else {
+        formError(form, error.message);
+      }
+    }
+  }),
+});
+// /settings
 // /config-tab:settings
 
 // config-tab:logs

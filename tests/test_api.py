@@ -2,7 +2,7 @@ import json
 import os
 import unittest
 
-from orchestra import api, auth, child_runs, config, db, dsh, scheduler
+from orchestra import api, auth, child_runs, cli, config, db, dsh, scheduler
 from tests.common import StateCase
 
 
@@ -64,6 +64,55 @@ class ApiTests(StateCase):
         with self.assertRaises(api.Problem) as problem:
             self.api.handle("GET", "/api/usage/summary", {}, None, auth.Identity("service", "s", frozenset({"attention-answer"})))
         self.assertEqual(problem.exception.status, 403)
+    def test_settings_crud_validation_and_revision_conflict(self):
+        value = self.call("GET", "/api/settings").data["data"]
+        self.assertEqual(value["settings"], {"max_active_runs": 4, "max_children_per_run": 100, "max_child_depth": 3, "paused": False})
+        self.assertEqual(value["revision"], 1)
+        self.assertEqual(value["scheduler"], {"paused": False, "queued": 0, "running": 0, "capacity": 4})
+        updated = self.call("PATCH", "/api/settings", {"expected_revision": 1, "max_active_runs": 2, "max_child_depth": 1}).data["data"]
+        self.assertEqual((updated["settings"]["max_active_runs"], updated["settings"]["max_child_depth"], updated["revision"]), (2, 1, 2))
+        self.assertEqual(updated["scheduler"]["capacity"], 2)
+        for body in ({"max_active_runs": 0}, {"max_active_runs": "4"}, {"paused": 1}, {"bogus": 1}, {"max_active_runs": True}):
+            with self.assertRaises(api.Problem) as problem:
+                self.call("PATCH", "/api/settings", {"expected_revision": 2, **body})
+            self.assertEqual(problem.exception.status, 400, body)
+        with self.assertRaises(api.Problem) as problem:
+            self.call("PATCH", "/api/settings", {"expected_revision": 1, "max_active_runs": 3})
+        self.assertEqual(problem.exception.status, 409)
+        with self.assertRaises(api.Problem) as problem:
+            self.call("PATCH", "/api/settings", {"max_active_runs": 3})
+        self.assertEqual(problem.exception.status, 400)
+        self.assertEqual(self.call("GET", "/api/settings").data["data"]["settings"]["max_active_runs"], 2)
+        reader = auth.Identity("service", "reader", frozenset({"read"}))
+        self.assertEqual(self.api.handle("GET", "/api/settings", {}, None, reader).status, 200)
+        for method, path in (("PATCH", "/api/settings"), ("POST", "/api/scheduler/pause")):
+            with self.assertRaises(api.Problem) as problem:
+                self.api.handle(method, path, {}, {"expected_revision": 2}, reader)
+            self.assertEqual(problem.exception.status, 403)
+        actions = [row["action"] for row in self.con.execute("SELECT action FROM control_events")]
+        self.assertEqual(actions.count("settings.update"), 1)
+
+    def test_scheduler_pause_and_resume_endpoints(self):
+        paused = self.call("POST", "/api/scheduler/pause", {"note": "maintenance"}).data["data"]
+        self.assertTrue(paused["scheduler"]["paused"]); self.assertEqual(paused["revision"], 2)
+        self.create_profile()
+        run = self.call("POST", "/api/runs", {"request_id": "held", "profile": "fake", "objective": "work", "cwd": str(self.repo)}).data["data"]
+        self.assertEqual(scheduler.admit(self.con)["admitted"], [])
+        self.assertEqual(self.call("GET", "/api/settings").data["data"]["scheduler"]["queued"], 1)
+        resumed = self.call("POST", "/api/scheduler/resume", {}).data["data"]
+        self.assertFalse(resumed["scheduler"]["paused"])
+        self.assertEqual(scheduler.admit(self.con)["admitted"], [run["id"]])
+        detail = [json.loads(row["detail"]) for row in self.con.execute("SELECT detail FROM control_events WHERE action IN ('scheduler.pause','scheduler.resume') ORDER BY id")]
+        self.assertEqual(detail, [{"paused": True, "note": "maintenance"}, {"paused": False, "note": None}])
+
+    def test_settings_cli_parses(self):
+        parser = cli.build_parser()
+        self.assertEqual(parser.parse_args(["settings"]).action, "list")
+        args = parser.parse_args(["settings", "set", "max_active_runs", "2"])
+        self.assertEqual((args.action, args.key, args.value), ("set", "max_active_runs", "2"))
+        self.assertEqual(parser.parse_args(["pause", "why"]).note, "why")
+        self.assertEqual(parser.parse_args(["resume-scheduler"]).command, "resume-scheduler")
+        self.assertEqual(parser.parse_args(["resume", "--run", "3"]).command, "resume")
 
     def test_group_update_is_revision_guarded(self):
         created = self.call("POST", "/api/groups", {"name": "Build"}).data["data"]

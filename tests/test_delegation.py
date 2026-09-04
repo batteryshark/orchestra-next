@@ -1,7 +1,7 @@
 import json
 import subprocess
 
-from orchestra import child_runs, runs, supervise, worktree
+from orchestra import child_runs, runs, settings, supervise, worktree
 from orchestra.contracts import RunRequest
 from tests.common import StateCase
 
@@ -43,6 +43,15 @@ class DelegationTests(StateCase):
         self.assertEqual(child["max_children"], 3)
         inherited = self.child(parent, "tiered-default")
         self.assertEqual((inherited["max_child_tier"], inherited["max_children"]), (2, 3))
+
+    def test_fleet_settings_cap_children_and_depth(self):
+        settings.update(self.con, {"max_children_per_run": 1, "max_child_depth": 1}, expected_revision=1, actor="test")
+        parent = self.parent("capped", max_children=5)
+        child = self.child(parent, "capped-1")
+        with self.assertRaisesRegex(child_runs.DelegationError, "max_children"):
+            self.child(parent, "capped-2")
+        with self.assertRaisesRegex(child_runs.DelegationError, "max_child_depth"):
+            self.child(child, "capped-grandchild")
 
     def test_worktree_ref_is_never_a_git_option(self):
         run = self.parent("lock", ref="--lock")

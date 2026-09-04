@@ -77,6 +77,15 @@ class DocumentConformanceTests(unittest.TestCase):
         self.assertIn('"orchestra-next.ui"', self.js)
         self.assertNotRegex(self.js, r'"orchestra\.[a-z]', "V2 key name")
 
+    def test_settings_tab_and_scheduler_chip_are_wired(self):
+        self.assertIn('<form data-form="settings"', self.html)
+        for key in ("max_active_runs", "max_children_per_run", "max_child_depth"):
+            self.assertIn(f'name="{key}" type="number" min="1"', self.html, key)
+        self.assertIn('<span id="scheduler-paused" class="chip warn" hidden>Scheduler paused</span>', self.html)
+        self.assertIn('id="scheduler-state"', self.html)
+        for marker in ("// settings", "// /settings", '"scheduler-pause"', '"scheduler-resume"', "settings:", 'api.get("/api/settings")', 'api.patch("/api/settings"'):
+            self.assertIn(marker, self.js, marker)
+
     def test_config_tabs_exist_and_route(self):
         tabs = ["profiles", "groups", "identities", "storage", "audit", "settings", "logs", "diagnostics"]
         for tab in tabs:
