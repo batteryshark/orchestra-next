@@ -1,112 +1,135 @@
-# Orchestra-next
+<p align="center">
+  <img src="assets/banner.svg" alt="Orchestra Next" width="640">
+</p>
 
-Orchestra-next is a local durable-run service for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness). It keeps Orchestra's fleet mechanics—groups, dependencies, isolated Git worktrees, children, attention, artifacts, controls, callbacks, raw usage, and event feeds—but has one execution path:
+<p align="center">
+  <b>Durable agent runs for local fleets, built on the DeepSeek Harness.</b><br>
+  Python 3.11+, standard library only. One SQLite file. A three-file browser console. No build step.
+</p>
+
+---
+
+**Orchestra Next is a streamlined rewrite of Orchestra that leverages the [DeepSeek Harness (`dsh`)](https://github.com/deepseek-ai/deepseek-harness) as its only execution engine.** The previous Orchestra drove six different agent CLIs through six trace adapters. Orchestra Next keeps the fleet mechanics that proved useful (groups, dependencies, isolated Git worktrees, child runs, attention, artifacts, controls, callbacks, raw usage, event feeds) and gives them exactly one execution path:
 
 ```text
-API/CLI → durable run → resident per-run DSH ACP process → configured model
+API / CLI  →  durable run  →  resident per-run DSH ACP process  →  the model you chose
 ```
 
-This is an experimental fork. It does not read `~/.orchestra`, does not expose the `orchestra` command, and does not import V2 state.
+Every model you can reach through DSH becomes a route: DeepSeek, Claude, GPT via Codex, Meta, Z.ai, or any OpenAI-compatible endpoint you declare in the profile patch. Orchestra Next validates every profile against DSH's live catalog, so a route that DSH cannot serve never reaches the scheduler.
+
+## Screenshots
+
+| Fleet | Run activity |
+|---|---|
+| ![Fleet](docs/screenshots/fleet.png) | ![Run activity](docs/screenshots/run-activity.png) |
+
+| New run | Directory picker |
+|---|---|
+| ![New run](docs/screenshots/new-run.png) | ![Directory picker](docs/screenshots/new-run-picker.png) |
+
+| Changes | Profiles |
+|---|---|
+| ![Changes](docs/screenshots/run-changes.png) | ![Profiles](docs/screenshots/config-profiles.png) |
+
+| Settings | Logs |
+|---|---|
+| ![Settings](docs/screenshots/config-settings.png) | ![Logs](docs/screenshots/config-logs.png) |
+
+## What you get
+
+- **Durable runs.** Each run is a row in SQLite, a Git worktree on its own branch, and one resident DSH process. Crashes recover; pauses checkpoint and release capacity; the same session resumes.
+- **Fleet controls.** Tell, interrupt, pause, resume, reroute to another model mid-run, stop, stop the whole tree, retry, continue, merge the branch back into your checkout.
+- **Attention inbox.** Questions, decisions, permission requests, alerts, and verification failures land in one inbox with leases so automated responders never collide.
+- **Evidence.** Every DSH event, tool call, token count, checkpoint, diff, artifact, and control message is kept and browsable. Raw token facts only: no prices, no quota guesses.
+- **Operator console.** Fleet, run detail with six sections, attention and messages, and a tabbed Config view (profiles, groups, identities and pairing, storage and prune, audit, settings, service logs, diagnostics). Keyboard driven.
+- **Scheduler.** Global and per-profile concurrency, dependency conditions, child-run caps, and a pause switch. Limits are editable at runtime.
+- **Small footprint.** No Python dependencies. The console is `index.html`, `app.js`, and `app.css`. The daemon runs as a launchd service on macOS.
 
 ## Requirements
 
 - Python 3.11 or newer
-- DSH exactly `0.1.2-alpha.3`
+- DSH exactly `0.1.2-alpha.3` (`npm i -g @deepseek-ai/dsh@0.1.2-alpha.3`)
 - Git
-- Node/npm and the official authenticated `claude` CLI only for the optional
-  `claude-subscription` route
-
-There are no Python runtime dependencies.
+- Optional: Node/npm and the authenticated `claude` CLI for the Claude subscription route
 
 ## Setup
 
 ```sh
 pip install -e .
-orchestra-next init
-orchestra-next dsh setup
-orchestra-next dsh check --capabilities
-
-# Optional private Claude subscription route
-orchestra-next claude setup
-orchestra-next claude check
+orchestra-next init                        # state dir, first operator device, saved token
+orchestra-next dsh setup                   # installs the orchestra-next DSH profile
+orchestra-next dsh check --capabilities    # lists every route DSH advertises
+orchestra-next service install --start     # macOS: run the daemon under launchd
 ```
 
-`dsh setup` installs the repository's `orchestra-next` profile under the existing DSH home. It does not change DSH credentials, provider settings, or endpoints. `dsh check` reports native DeepSeek search as unavailable when it cannot detect `DEEPSEEK_API_KEY`; it never displays the value. The profile uses uncompressed per-run JSONL, durable checkpoints, no outbound telemetry, native DSH web search/fetch, goals, compaction, jobs, skills, todo, and the normal shell/filesystem tools. Normal subagents, workflows, Ralph, plan mode, and native user elicitation are disabled. An explicit Ralph run loads the small `ralph.patch.yml` overlay.
+Without the service, run `orchestra-next daemon` in a terminal. The daemon listens on `127.0.0.1:8766`, serves the console at `/`, and the API under `/api`. State lives in `~/.orchestra-next`. Override with `ORCHESTRA_NEXT_HOME` or the non-secret `bootstrap.json`.
 
-`claude setup` reproducibly installs the lockfile-pinned local sidecar
-(`@openchamber/opencode-claude` 0.14.0 and Bun 1.4.0) beneath Orchestra-next
-state. It does not read, copy, or
-change Claude credentials. `claude check` asks the official CLI for login status
-without returning account data. A Claude run gets its own authenticated
-loopback listener on an OS-assigned port, persistent session binding, and
-sidecar process; all are released with the run supervisor.
+Pair a browser: run `orchestra-next pair`, open the console, enter the code. On a tailnet, set `"trust_tailnet": true` in `bootstrap.json` and skip pairing (see [docs/API.md](docs/API.md)).
 
-Configure a route from DSH's live ACP catalog:
+`dsh setup` installs the repository's `orchestra-next` profile under your existing DSH home. It never touches DSH credentials. The profile enables goals, compaction, jobs, skills, todo, native web search and fetch, and the normal shell and filesystem tools. Subagents, workflows, plan mode, and native elicitation are off. An explicit Ralph run loads the small `ralph.patch.yml` overlay.
+
+## Routes and profiles
+
+A profile is a named route: provider, model, optional reasoning effort, tier, and concurrency cap. The console's profile form and the API both read DSH's live catalog.
 
 ```sh
-orchestra-next daemon
-
-# in another terminal
-orchestra-next profile-create "DeepSeek worker" deepseek-official deepseek-v4-flash \
-  --slug deepseek --tier 2
-
-orchestra-next run deepseek "Implement and verify the requested change" \
-  --cwd /path/to/repository \
-  --verify python -m unittest
-
-# The optional sidecar looks like any other DSH route.
-orchestra-next profile-create "Claude worker" claude-subscription sonnet \
-  --slug claude --tier 2
+orchestra-next profile-create "DeepSeek worker" deepseek-official deepseek-v4-flash --slug ds-flash --tier 1 --effort high
+orchestra-next run ds-flash "Implement and verify the requested change" --cwd /path/to/repo --verify python -m unittest
 ```
 
-The subscription sidecar is for private evaluation. Anthropic's current Agent
-SDK documentation requires prior approval before a third-party product offers
-claude.ai login or subscription rate limits; use an API-key route for public
-deployment unless that approval exists.
+Providers come from `orchestra/dsh-profile/cordis.patch.yml`. DSH ships DeepSeek. The patch adds:
 
-The daemon listens on `127.0.0.1:8766`; the API prefix is `/api`. The operator console is served at `/`. State lives at `~/.orchestra-next`. Override these with the non-secret bootstrap file or `ORCHESTRA_NEXT_HOME`/`ORCHESTRA_NEXT_URL`. Browsers pair with a code from `orchestra-next pair`; on a tailnet you can instead set `"trust_tailnet": true` in the bootstrap file and skip pairing entirely (see docs/API.md).
+| Provider | Models | Credential |
+|---|---|---|
+| `claude-subscription` | haiku, sonnet, opus, fable (with efforts) | your `claude` login, through a per-run local sidecar |
+| `openai-codex` | gpt-5.6-sol, gpt-5.6-luna | the Codex CLI's OAuth token |
+| `meta` | muse-spark-1.3 | API key |
+| `zai` | glm-5.3, glm-5.3-flash | API key |
 
-The console is three static files under `orchestra/ui/` with no build step. It covers fleet status and dispatch, run activity with tell, interrupt, pause, resume, and stop, the attention inbox, Git changes, raw token usage, and run evidence. Keyboard: `/` filter, `j`/`k` move, `Enter` open, `t` direct a run, `1`–`5` run sections, `Esc` back.
+API keys are read from OpenCode's `auth.json` when present and passed to DSH as environment variables. Add any OpenAI-compatible endpoint by declaring it in the patch; DSH advertises it on the next catalog refresh. See [docs/API.md](docs/API.md) for the `worker_env` allowlist.
 
-## Run as a service
+The Claude subscription sidecar is for private evaluation. Anthropic's Agent SDK terms require approval before a third-party product offers claude.ai login; use an API-key route for public deployment unless that approval exists.
 
-On macOS, `orchestra-next service` manages a per-user launchd LaunchAgent (`local.orchestra-next.daemon`) that runs `python -m orchestra daemon` at login and restarts it if it exits:
+Migrating from the previous Orchestra: `orchestra-next profiles-import-v2` maps the old profiles onto DSH routes, reports what it can and cannot route, and creates them with `--apply`.
 
-```sh
-orchestra-next service install --start   # write the plist, load it, start now
-orchestra-next service status            # JSON: installed, loaded, state, pid
-orchestra-next service restart           # launchctl kickstart -k
-orchestra-next service uninstall         # bootout and remove the plist
-```
+## Console
 
-The plist lives at `~/Library/LaunchAgents/local.orchestra-next.daemon.plist`. It runs the interpreter that ran `install`, from the repo root, with your current `PATH` so `dsh`, `agy`, `claude`, and `codex` resolve. Both streams log to `~/.orchestra-next/logs/daemon.log`. `install` refuses to run while a foreground `orchestra-next daemon` is running. Other platforms exit 1.
+Three static files under `orchestra/ui/`. Fleet with status chips, a usage strip, filters, and the New run form with a host directory picker. Run detail: Activity, Changes, Artifacts, Usage, Evidence, Log. Attention with a Messages ledger. Config with eight tabs.
+
+Keyboard: `/` filter, `n` new run, `j` `k` move, `Enter` open, `t` direct a run, `1`–`6` run sections, `[` `]` cycle sections or Config tabs, `Esc` back. Details in [docs/CONSOLE.md](docs/CONSOLE.md).
 
 ## Run behavior
 
-A goal run must create a DSH goal before substantive work. DSH drives continuation rounds inside the same process and session. Orchestra-next reconciles the session JSONL by `(session_id, seq)`, including goal state, rounds, messages, tool lifecycle, compaction, and exact input/output/cache token facts.
+A goal run must create a DSH goal before substantive work. DSH drives continuation rounds inside the same process and session. Orchestra Next reconciles the session JSONL by `(session_id, seq)`: goal state, rounds, messages, tool lifecycle, compaction, and exact input, output, and cache token counts.
 
-Transient process failure gets one same-session resume. Semantic questions and child waits checkpoint the worktree, stop DSH, release capacity, and later resume the same session. Permission requests park the exact ACP process for up to ten minutes while releasing scheduler capacity. Rerouting cancels current activity, changes the ACP model configuration, increments the cache epoch, and continues the same goal.
+Transient process failure gets one same-session resume. Questions and child waits checkpoint the worktree, stop DSH, release capacity, and later resume the same session. Permission requests park the ACP process for up to ten minutes while releasing scheduler capacity. Rerouting cancels current activity, changes the ACP model, increments the cache epoch, and continues the same goal.
 
-Completion checkpoints Git evidence and runs the optional verifier as a direct argv. A failed verifier receives up to two repair cycles in the same DSH session; continued failure opens attention instead of marking the run complete.
+Completion checkpoints Git evidence and runs the optional verifier as a direct argv. A failed verifier gets up to two repair cycles in the same DSH session; continued failure opens attention instead of marking the run complete.
 
-Worker-facing bridge commands infer the current run from their environment:
+Workers talk back through bridge commands that infer the run from their environment:
 
 ```sh
 orchestra-next ask "Which deployment target should I use?"
-orchestra-next child deepseek "Investigate the failing subsystem"
+orchestra-next child ds-flash "Investigate the failing subsystem"
 orchestra-next artifact reports/result.json
 ```
 
-Worker authentication is stored in a run-owned `0600` file. The bearer token is never placed directly in DSH's subprocess environment.
-
-Claude sidecar HTTP authentication uses a separate short-lived bearer. The
-sidecar reads it from another run-owned `0600` file; DSH receives only that
-ephemeral provider credential. A stable run header prevents identical prompts
-in different runs from sharing Claude sessions.
+Worker credentials live in run-owned `0600` files. Bearer tokens never enter DSH's environment.
 
 ## Operations
 
-Stop the daemon first. `orchestra-next backup [dest]` writes a consistent database copy, `bootstrap.json`, and `artifacts/` into `<dest or ~/.orchestra-next/backups>/orchestra-next-<UTC stamp>/` with a `manifest.json` of sha256 digests. `orchestra-next restore <backup>` verifies every digest and prints the plan; add `--apply` to move the current state into `~/.orchestra-next/trash/restore-<stamp>/` and copy the backup in. Nothing is deleted.
+```sh
+orchestra-next service status | restart | uninstall
+orchestra-next settings list                 # max_active_runs, child caps, paused
+orchestra-next settings set max_active_runs 6
+orchestra-next pause "provider incident"     # scheduler admits nothing; running runs continue
+orchestra-next resume-scheduler
+orchestra-next backup [dest]                 # consistent DB copy + bootstrap + artifacts + sha256 manifest
+orchestra-next restore <backup> --apply      # verifies digests, moves current state to trash, never deletes
+orchestra-next storage                       # size report; prune plans are dry-run then apply
+```
+
+Service logs: `~/.orchestra-next/logs/daemon.log`, also tailed in Config › Logs. Each run's raw ACP stream is under its run section Log.
 
 ## Tests
 
@@ -114,11 +137,16 @@ Stop the daemon first. `orchestra-next backup [dest]` writes a consistent databa
 python run_tests.py
 ```
 
-The suite uses a deterministic fake ACP server and makes no provider or network calls. Paid-provider evaluation is intentionally separate; compare completion rate, wall time, cache reads/writes, compaction, attention, and restart recovery against V2 before moving Workbridge.
+The suite uses a deterministic fake ACP server and makes no provider or network calls.
 
-See [DESIGN.md](DESIGN.md) for ownership boundaries,
-[docs/API.md](docs/API.md) for the public surface,
-[docs/CONSOLE.md](docs/CONSOLE.md) for the operator console maintainer notes, and
-[docs/UI_PROPOSAL.md](docs/UI_PROPOSAL.md) for the proposed operator interface.
-The [Antigravity delegation spike](docs/ANTIGRAVITY_SPIKE.md) records the
-evaluated official-CLI integration boundary.
+## Documentation
+
+- [DESIGN.md](DESIGN.md): ownership boundaries and what stays out of scope
+- [docs/API.md](docs/API.md): the HTTP and CLI surface
+- [docs/CONSOLE.md](docs/CONSOLE.md): console maintainer notes
+- [docs/UI_PROPOSAL.md](docs/UI_PROPOSAL.md): the operator interface proposal
+- [docs/ANTIGRAVITY_SPIKE.md](docs/ANTIGRAVITY_SPIKE.md): the evaluated Antigravity delegation boundary
+
+## License
+
+MIT. See [LICENSE](LICENSE).

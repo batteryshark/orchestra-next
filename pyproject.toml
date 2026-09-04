@@ -3,10 +3,14 @@ name = "orchestra-next"
 license = "MIT"
 license-files = ["LICENSE"]
 version = "3.0.0a1"
-description = "Durable DSH execution for local agent fleets"
+description = "Durable agent runs for local fleets, built on the DeepSeek Harness (dsh)"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/batteryshark/orchestra-next"
+Repository = "https://github.com/batteryshark/orchestra-next"
 
 [project.scripts]
 orchestra-next = "orchestra.cli:main"
