@@ -105,8 +105,41 @@
 
 <section id="view-attention" aria-label="Attention inbox" hidden>
   <h1>Attention</h1>
-  <p id="attention-state" class="view-state">Loading…</p>
-  <div id="attention-list"></div>
+  <div id="attention-tabs" class="run-tabs" role="tablist" aria-label="Attention sections">
+    <a role="tab" href="#/attention" data-att-tab="inbox" aria-selected="true">Attention</a>
+    <a role="tab" href="#/attention/messages" data-att-tab="messages" aria-selected="false">Messages <span id="outbox-undeliverable" class="chip bad" hidden></span></a>
+  </div>
+  <div id="attention-inbox">
+    <p id="attention-state" class="view-state">Loading…</p>
+    <div id="attention-list"></div>
+  </div>
+  <div id="attention-messages" hidden>
+    <div class="filter-bar">
+      <select data-outbox-filter="status" aria-label="Filter messages by delivery status">
+        <option value="">Every status</option>
+        <option value="queued">queued</option>
+        <option value="delivered">delivered</option>
+        <option value="undeliverable">undeliverable</option>
+      </select>
+      <select data-outbox-filter="kind" aria-label="Filter messages by kind">
+        <option value="">Every kind</option>
+        <option value="tell">tell</option>
+        <option value="interrupt">interrupt</option>
+        <option value="pause">pause</option>
+        <option value="resume">resume</option>
+        <option value="reroute">reroute</option>
+        <option value="stop">stop</option>
+      </select>
+    </div>
+    <p id="outbox-state" class="view-state">Loading messages…</p>
+    <div class="table-scroll">
+      <table class="plain outbox" hidden>
+        <thead><tr><th>Status</th><th>Kind</th><th>Run</th><th>Message</th><th>Sent</th><th>Delivered</th></tr></thead>
+        <tbody id="outbox-rows"></tbody>
+      </table>
+    </div>
+    <p class="load-more"><button class="btn" data-action="outbox-older" hidden>Load older messages</button></p>
+  </div>
 </section>
 
 <section id="view-config" aria-label="Configuration" hidden>

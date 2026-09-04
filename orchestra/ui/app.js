@@ -2037,7 +2037,7 @@ function render() {
   renderNav();
   if ((marks.has("fleet") || marks.has("nav")) && store.route.view === "fleet") renderFleet();
   if (marks.has("run") && store.route.view === "run") renderRun();
-  if ((marks.has("attention") || marks.has("nav")) && store.route.view === "attention") renderAttention();
+  if ((marks.has("attention") || marks.has("nav")) && store.route.view === "attention") { renderAttention(); renderOutbox(); }
   if (marks.has("config") && store.route.view === "config") renderConfig();
   if (marks.has("auth")) markDirty(store.route.view === "run" ? "run" : store.route.view);
 }
@@ -2899,6 +2899,103 @@ Object.assign(FORMS, {
 });
 // --- end slice3-admin ---
 
+// --- outbox ---
+// Fleet-wide ledger of operator→run controls (GET /api/messages), shown as the
+// Messages sub-tab of Attention (#/attention/messages). One page per board
+// revision; "Load older" pages back on the rowid cursor. The undeliverable
+// count beside the sub-tab is informational; the nav badge stays open attention.
+const PAGE_OUTBOX = 200;
+const OUTBOX_GLYPH = { tell: "💬", interrupt: "⚡", pause: "⏸", resume: "▶", reroute: "🔀", stop: "⏹" };
+const OUTBOX_TONE = { queued: "warn", delivered: "good", undeliverable: "bad" };
+store.outbox = { rows: [], floor: null, exhausted: false, revision: -1, filters: { status: "", kind: "" }, undeliverable: 0, error: "" };
+
+function outboxQuery(extra = {}) {
+  const query = new URLSearchParams({ limit: String(PAGE_OUTBOX) });
+  for (const [key, value] of Object.entries({ ...store.outbox.filters, ...extra })) if (value) query.set(key, String(value));
+  return query.toString();
+}
+
+async function loadOutbox() {
+  const box = store.outbox;
+  box.revision = store.boardRevision;
+  try {
+    const [rows, stuck] = await Promise.all([
+      api.get(`/api/messages?${outboxQuery()}`),
+      api.get(`/api/messages?${outboxQuery({ status: "undeliverable", kind: "" })}`),
+    ]);
+    box.rows = rows;
+    box.floor = rows.length ? rows[rows.length - 1].id : null;
+    box.exhausted = rows.length < PAGE_OUTBOX;
+    box.undeliverable = stuck.length;
+    box.error = "";
+  } catch (error) {
+    box.error = error.message;
+  }
+  markDirty("attention");
+}
+
+function buildOutboxRow(row) {
+  const run = store.runs.get(row.run_id);
+  return el("tr", { dataset: { message: row.message_id } },
+    el("td", null, el("span", { class: `chip ${OUTBOX_TONE[row.status] || ""}`, text: row.status })),
+    el("td", null, el("span", { class: "kind-glyph", "aria-hidden": "true", text: OUTBOX_GLYPH[row.kind] || "" }), row.kind),
+    el("td", null, el("a", { href: `#/runs/${row.run_id}`, text: run ? runLabel(run) : (row.run_title ? `#${row.run_id} ${row.run_title}` : `run ${row.run_id}`) })),
+    el("td", { class: "outbox-body", title: row.body }, fmt.excerpt(row.body, 120)),
+    el("td", { title: row.created_at, text: fmt.rel(row.created_at) }),
+    el("td", { title: row.delivered_at || "", class: row.delivered_at ? "" : "muted", text: row.delivered_at ? fmt.rel(row.delivered_at) : "—" }));
+}
+
+function renderOutbox() {
+  const box = store.outbox;
+  const messages = store.route.section === "messages";
+  for (const tab of document.querySelectorAll("#attention-tabs [data-att-tab]")) {
+    tab.setAttribute("aria-selected", String((tab.dataset.attTab === "messages") === messages));
+  }
+  document.getElementById("attention-inbox").hidden = messages;
+  document.getElementById("attention-messages").hidden = !messages;
+  const stuck = document.getElementById("outbox-undeliverable");
+  stuck.hidden = !box.undeliverable;
+  stuck.textContent = `${box.undeliverable >= PAGE_OUTBOX ? `${PAGE_OUTBOX}+` : box.undeliverable} undeliverable`;
+  stuck.title = "Controls queued to a run that ended before delivery";
+  if (store.auth === "ok" && store.boardRevision >= 0 && box.revision !== store.boardRevision) loadOutbox();
+  if (!messages) return;
+  for (const select of document.querySelectorAll("[data-outbox-filter]")) {
+    if (select.value !== box.filters[select.dataset.outboxFilter]) select.value = box.filters[select.dataset.outboxFilter];
+  }
+  const state = document.getElementById("outbox-state");
+  const table = document.querySelector("table.outbox");
+  state.hidden = box.rows.length > 0;
+  if (box.error) state.textContent = `Messages unavailable: ${box.error}`;
+  else if (box.revision >= 0) state.textContent = "No messages match.";
+  table.hidden = box.rows.length === 0;
+  keyedList(document.getElementById("outbox-rows"), box.rows,
+    (row) => row.message_id,
+    (row) => `${row.status}:${row.delivered_at || ""}:${row.created_at}`,
+    buildOutboxRow,
+    (node, row) => node.replaceChildren(...buildOutboxRow(row).childNodes));
+  document.querySelector("[data-action=outbox-older]").hidden = box.exhausted || box.floor === null;
+}
+
+document.addEventListener("change", (event) => {
+  const field = event.target.closest("[data-outbox-filter]");
+  if (!field) return;
+  store.outbox.filters[field.dataset.outboxFilter] = field.value;
+  store.outbox.revision = -1;
+  markDirty("attention");
+});
+
+Object.assign(ACTIONS, {
+  "outbox-older": (button) => act("outbox-older", button, async () => {
+    const box = store.outbox;
+    const older = await api.get(`/api/messages?${outboxQuery({ before: box.floor })}`);
+    box.rows.push(...older);
+    if (older.length) box.floor = older[older.length - 1].id;
+    if (older.length < PAGE_OUTBOX) box.exhausted = true;
+    markDirty("attention");
+  }),
+});
+// --- end outbox ---
+
 // --- router ---
 function parseHash() {
   const segments = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
@@ -2906,7 +3003,7 @@ function parseHash() {
     const section = SECTIONS.includes(segments[2]) ? segments[2] : segments[2] ? "activity" : store.ui.section;
     return { view: "run", runId: Number(segments[1]), section };
   }
-  if (segments[0] === "attention") return { view: "attention", runId: null, section: null };
+  if (segments[0] === "attention") return { view: "attention", runId: null, section: segments[1] === "messages" ? "messages" : null };
   if (segments[0] === "config") return { view: "config", runId: null, section: null };
   if (segments[0] === "pair" && segments[1]) return { view: "pair", runId: null, section: null, code: segments[1] };
   return { view: "fleet", runId: null, section: null };

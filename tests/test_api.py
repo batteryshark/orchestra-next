@@ -146,6 +146,29 @@ class ConsoleApiTests(StateCase):
             self.call("GET", "/api/runs", query={"status": "bogus"})
         self.assertEqual(problem.exception.status, 400)
 
+    def test_messages_ledger_pages_and_filters(self):
+        self.create_profile()
+        first = self.submit("one")
+        second = self.submit("two")
+        self.call("POST", f"/api/runs/{first['id']}/tell", {"message": "first tell"})
+        self.call("POST", f"/api/runs/{second['id']}/pause", {})
+        self.call("POST", f"/api/runs/{second['id']}/tell", {"message": "second tell"})
+        rows = self.call("GET", "/api/messages").data["data"]
+        self.assertEqual([(row["run_id"], row["kind"], row["status"]) for row in rows],
+                         [(second["id"], "tell", "queued"), (second["id"], "pause", "queued"), (first["id"], "tell", "queued")])
+        self.assertEqual(rows[0]["body"], "second tell")
+        self.assertIn("run_title", rows[0])
+        page = self.call("GET", "/api/messages", query={"limit": "1"}).data["data"]
+        older = self.call("GET", "/api/messages", query={"limit": "1", "before": str(page[0]["id"])}).data["data"]
+        self.assertEqual([row["kind"] for row in page + older], ["tell", "pause"])
+        self.assertEqual([row["run_id"] for row in self.call("GET", "/api/messages", query={"run": str(first["id"])}).data["data"]], [first["id"]])
+        self.assertEqual(len(self.call("GET", "/api/messages", query={"kind": "pause"}).data["data"]), 1)
+        self.assertEqual(self.call("GET", "/api/messages", query={"status": "delivered"}).data["data"], [])
+        for bad in ({"status": "bogus"}, {"kind": "shout"}, {"before": "x"}):
+            with self.assertRaises(api.Problem) as problem:
+                self.call("GET", "/api/messages", query=bad)
+            self.assertEqual(problem.exception.status, 400)
+
     def test_device_and_service_token_management(self):
         keep, _ = auth.bootstrap_device(self.con, "Keep")
         pairing = auth.create_pairing(self.con, created_by_device_id=keep["device_id"])

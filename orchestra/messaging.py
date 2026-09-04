@@ -8,12 +8,16 @@ from orchestra import db
 from orchestra.contracts import TERMINAL_STATES
 
 
+KINDS = ("tell", "interrupt", "pause", "reroute", "resume", "stop")
+STATUSES = ("queued", "delivered", "undeliverable")
+
+
 class RunClosed(RuntimeError):
     pass
 
 
 def queue(con, run_id: int, *, kind: str, body: str, sender: str, detail=None) -> dict:
-    if kind not in ("tell", "interrupt", "pause", "reroute", "resume", "stop"):
+    if kind not in KINDS:
         raise ValueError(f"unsupported run control: {kind}")
     run = con.execute("SELECT status FROM runs WHERE id=?", (run_id,)).fetchone()
     if not run:
@@ -40,3 +44,35 @@ def claim_pending(con, run_id: int, *, safe_boundary: bool = True) -> list[dict]
 
 def thread(con, run_id: int) -> list[dict]:
     return [dict(row) for row in con.execute("SELECT * FROM messages WHERE run_id=? ORDER BY created_at", (run_id,))]
+
+
+def close_pending(con, run_id: int) -> int:
+    """A terminal run takes no more controls: what is still queued becomes undeliverable. Caller holds the transaction."""
+    return con.execute("UPDATE messages SET status='undeliverable' WHERE run_id=? AND status='queued'", (run_id,)).rowcount
+
+
+def ledger(con, *, status=None, kind=None, run_id=None, before=None, limit=200) -> list[dict]:
+    """Fleet-wide page of controls, newest first. `before` is the rowid cursor from a prior page."""
+    where, params = [], []
+    if status:
+        where.append("m.status=?"); params.append(status)
+    if kind:
+        where.append("m.kind=?"); params.append(kind)
+    if run_id:
+        where.append("m.run_id=?"); params.append(run_id)
+    if before:
+        where.append("m.rowid<?"); params.append(before)
+    clause = (" WHERE " + " AND ".join(where)) if where else ""
+    rows = con.execute(f"SELECT m.rowid AS id,m.*,r.title AS run_title FROM messages m JOIN runs r ON r.id=m.run_id{clause} ORDER BY m.rowid DESC LIMIT ?", (*params, limit)).fetchall()
+    out = []
+    for row in rows:
+        item = dict(row)
+        body = item["body"]
+        if body.startswith("{"):
+            try:
+                body = json.loads(body).get("body") or body
+            except (ValueError, AttributeError):
+                pass
+        item["body"] = str(body)[:200]
+        out.append(item)
+    return out
