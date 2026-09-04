@@ -212,10 +212,12 @@ function uiStateEncode(state) {
   const f = state.filters;
   const filters = { status: [...f.status], group: f.group, profile: f.profile, text: f.text };
   if ("strategy" in f) filters.strategy = f.strategy;
-  return JSON.stringify({ filters, machine: Boolean(state.ui.machine), section: state.ui.section });
+  const d = state.ui.dispatch ?? {};
+  const dispatch = { profile: typeof d.profile === "string" ? d.profile : "", group: typeof d.group === "string" ? d.group : "" };
+  return JSON.stringify({ filters, machine: Boolean(state.ui.machine), section: state.ui.section, dispatch });
 }
 function uiStateDecode(raw) {
-  const out = { filters: { status: new Set(), group: "", profile: "", text: "" }, machine: false, section: "activity" };
+  const out = { filters: { status: new Set(), group: "", profile: "", text: "" }, machine: false, section: "activity", dispatch: { profile: "", group: "" } };
   try {
     const value = JSON.parse(raw);
     const f = value?.filters ?? {};
@@ -223,6 +225,7 @@ function uiStateDecode(raw) {
     for (const key of ["group", "profile", "text", "strategy"]) if (typeof f[key] === "string") out.filters[key] = f[key];
     out.machine = value?.machine === true;
     if (SECTIONS.includes(value?.section)) out.section = value.section;
+    for (const key of ["profile", "group"]) if (typeof value?.dispatch?.[key] === "string") out.dispatch[key] = value.dispatch[key];
   } catch {
     // malformed or absent: defaults
   }
@@ -1229,8 +1232,12 @@ function fillOptions(select, rows, valueKey, labelKey) {
 }
 
 function renderFleet() {
-  for (const select of document.querySelectorAll("select[data-options=profiles]")) fillOptions(select, store.profiles, select.dataset.filter ? "id" : "slug", "slug");
+  for (const select of document.querySelectorAll("select[data-options=profiles]")) {
+    if (select.dataset.filter) fillOptions(select, store.profiles, "id", "slug");
+    else fillProfileOptions(select, store.profiles);
+  }
   for (const select of document.querySelectorAll("select[data-options=groups]")) fillOptions(select, store.groups, select.dataset.filter ? "group_id" : "slug", "slug");
+  updateDispatchSummary();
 
   const runs = [...store.runs.values()].sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
   // Counts cover the loaded window; with a server-side filter that window is a subset, hence "in view".
@@ -2898,6 +2905,227 @@ Object.assign(FORMS, {
   }),
 });
 // --- end slice3-admin ---
+
+// --- new-run-logic ---
+// Dispatch profile option text: "slug · provider/model · effort", "(disabled)" when not enabled.
+function profileOptionLabel(profile) {
+  const parts = [profile.slug, `${profile.provider}/${profile.model}`];
+  if (profile.effort) parts.push(profile.effort);
+  return parts.join(" · ") + (profile.enabled === false ? " (disabled)" : "");
+}
+// One line under the dispatch form. `error` wins; `branch` is optional.
+function dispatchSummary({ profile, cwd, branch, error }) {
+  if (error) return { text: error, bad: true };
+  if (!profile) return { text: "Choose a profile.", bad: false };
+  const where = cwd ? cwd : "the daemon's working directory";
+  return { text: `Will run ${profile} in ${where}${branch ? ` (git: ${branch})` : ""}`, bad: false };
+}
+// "/a/b" → [{name:"/",path:"/"},{name:"a",path:"/a"},{name:"b",path:"/a/b"}]. POSIX paths only.
+function pathCrumbs(path) {
+  const crumbs = [{ name: "/", path: "/" }];
+  let current = "";
+  for (const segment of String(path || "").split("/").filter(Boolean)) {
+    current += "/" + segment;
+    crumbs.push({ name: segment, path: current });
+  }
+  return crumbs;
+}
+// --- end new-run-logic ---
+
+// --- new-run-form ---
+// Dispatch form: profile labels, group → cwd fill, live summary, directory picker, remembered profile/group.
+store.ui.dispatch = { profile: "", group: "" }; // last-used dispatch selections, retained in orchestra-next.ui
+const dirInfoCache = new Map(); // path → {branch, git} | {error}
+
+function fillProfileOptions(select, rows) {
+  const signature = JSON.stringify(rows.map((row) => [row.slug, row.provider, row.model, row.effort, row.enabled, row.archived]));
+  if (select._sig === signature) return;
+  select._sig = signature;
+  const previous = select.value;
+  select.replaceChildren();
+  for (const row of rows) {
+    if (row.archived) continue;
+    const option = el("option", { value: row.slug, text: profileOptionLabel(row) });
+    if (row.enabled === false) option.disabled = true;
+    select.append(option);
+  }
+  select.value = select._pending ?? previous;
+  if (select.selectedIndex === -1 || select.selectedOptions[0]?.disabled) {
+    select.selectedIndex = [...select.options].findIndex((option) => !option.disabled);
+  } else delete select._pending;
+  updateDispatchSummary();
+}
+
+function dispatchForm() {
+  return document.querySelector("form[data-form=dispatch]");
+}
+
+function effectiveCwd(form) {
+  return form.elements.cwd.value.trim() || groupCwd(form.elements.group.value || "general");
+}
+
+let summaryTimer = null;
+function updateDispatchSummary() {
+  const form = dispatchForm();
+  if (!form) return;
+  const node = form.querySelector(".dispatch-summary");
+  const cwd = effectiveCwd(form);
+  const info = cwd ? dirInfoCache.get(cwd) : null;
+  const summary = dispatchSummary({ profile: form.elements.profile.value, cwd, branch: info?.branch, error: info?.error });
+  node.textContent = summary.text;
+  node.classList.toggle("bad", summary.bad);
+  if (cwd && !info) {
+    clearTimeout(summaryTimer);
+    summaryTimer = setTimeout(() => lookupDir(cwd), 300);
+  }
+}
+
+async function lookupDir(path) {
+  if (dirInfoCache.has(path)) return;
+  try {
+    const data = await api.get(`/api/host-directories?path=${encodeURIComponent(path)}`);
+    dirInfoCache.set(path, { branch: data.branch, git: data.git });
+  } catch (error) {
+    // 404: not a directory (the POST would 400 too). 403: outside the browsable roots, still a valid cwd.
+    dirInfoCache.set(path, error.status === 404 ? { error: `Working directory: ${error.message}` } : {});
+  }
+  updateDispatchSummary();
+}
+
+const picker = { path: null, parent: null, resolve: null };
+
+function renderPicker(data) {
+  picker.path = data.path;
+  picker.parent = data.parent;
+  const crumbs = pathCrumbs(data.path);
+  document.getElementById("dir-picker-crumbs").replaceChildren(...crumbs.flatMap((crumb, index) => {
+    const last = index === crumbs.length - 1;
+    const button = el("button", { type: "button", text: crumb.name, dataset: { action: "picker-go", path: crumb.path } });
+    if (last) button.setAttribute("aria-current", "true");
+    return index === 0 || last ? [button] : [button, el("span", { class: "sep", text: "/" })];
+  }));
+  const list = document.getElementById("dir-picker-list");
+  list.replaceChildren(...data.entries.map((entry) => el("li", null,
+    el("button", { type: "button", dataset: { action: "picker-enter", path: entry.path } },
+      el("span", { class: "name", text: entry.name }),
+      entry.git ? el("span", { class: "chip accent", text: "git" }) : null))));
+  const state = document.getElementById("dir-picker-state");
+  state.hidden = data.entries.length > 0 && !data.truncated;
+  state.textContent = data.entries.length ? `Only the first ${data.entries.length} subdirectories are listed.` : "No subdirectories.";
+  document.getElementById("dir-picker").querySelector("[data-action=picker-up]").disabled = !data.parent;
+  (list.querySelector("button") || document.querySelector("#dir-picker [data-action=picker-use]")).focus();
+}
+
+async function pickerLoad(path) {
+  const state = document.getElementById("dir-picker-state");
+  try {
+    renderPicker(await api.get(`/api/host-directories?path=${encodeURIComponent(path || "")}`));
+  } catch (error) {
+    state.hidden = false;
+    state.textContent = error.message;
+    if (picker.path === null && path) pickerLoad(""); // bad start path: fall back to home once
+  }
+}
+
+function openDirPicker(start) {
+  const dialog = document.getElementById("dir-picker");
+  picker.path = null;
+  picker.parent = null;
+  return new Promise((resolve) => {
+    dialog.returnValue = "cancel";
+    dialog.onclose = () => resolve(dialog.returnValue === "ok" ? picker.path : null);
+    dialog.showModal();
+    pickerLoad(start);
+  });
+}
+
+document.getElementById("dir-picker").addEventListener("keydown", (event) => {
+  const rows = [...document.querySelectorAll("#dir-picker-list button")];
+  const at = rows.indexOf(document.activeElement);
+  let handled = true;
+  if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) document.getElementById("dir-picker").close("ok");
+  else if (event.key === "Backspace") { if (picker.parent) pickerLoad(picker.parent); }
+  else if (event.key === "ArrowDown" && rows.length) rows[Math.min(rows.length - 1, at + 1)].focus();
+  else if (event.key === "ArrowUp" && rows.length) rows[Math.max(0, at - 1)].focus();
+  else if (event.key === "Home" && rows.length) rows[0].focus();
+  else if (event.key === "End" && rows.length) rows[rows.length - 1].focus();
+  else handled = false;
+  if (handled) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+});
+
+Object.assign(ACTIONS, {
+  "browse-cwd": async () => {
+    const form = dispatchForm();
+    const chosen = await openDirPicker(effectiveCwd(form));
+    if (chosen) {
+      form.elements.cwd.value = chosen;
+      updateDispatchSummary();
+      form.elements.cwd.focus();
+    }
+  },
+  "picker-enter": (button) => pickerLoad(button.dataset.path),
+  "picker-go": (button) => pickerLoad(button.dataset.path),
+  "picker-up": () => { if (picker.parent) pickerLoad(picker.parent); },
+  "picker-use": () => document.getElementById("dir-picker").close("ok"),
+});
+
+{
+  const base = FORMS.dispatch;
+  Object.assign(FORMS, {
+    dispatch: async (form, event) => {
+      const values = form.elements;
+      if (!values.objective.value.trim()) {
+        formError(form, "Objective is required.");
+        values.objective.focus();
+        return;
+      }
+      if (values.profile.selectedOptions[0]?.disabled) {
+        formError(form, "That profile is disabled. Choose another.");
+        return;
+      }
+      store.ui.dispatch = { profile: values.profile.value, group: values.group.value };
+      saveUiState();
+      await base(form, event);
+      // form.reset() on success cleared the selects; keep the operator's choices for next time.
+      values.profile.value = store.ui.dispatch.profile;
+      values.group.value = store.ui.dispatch.group;
+      updateDispatchSummary();
+    },
+  });
+}
+
+{
+  const form = dispatchForm();
+  const groupSelect = form.elements.group;
+  groupSelect.addEventListener("change", () => {
+    const cwd = form.elements.cwd;
+    const previousCwd = groupCwd(groupSelect._lastGroup || "");
+    const next = groupCwd(groupSelect.value);
+    if (next && (!cwd.value.trim() || cwd.value.trim() === previousCwd)) cwd.value = next;
+    groupSelect._lastGroup = groupSelect.value;
+    store.ui.dispatch.group = groupSelect.value;
+    saveUiState();
+    updateDispatchSummary();
+  });
+  form.elements.profile.addEventListener("change", () => {
+    store.ui.dispatch.profile = form.elements.profile.value;
+    saveUiState();
+    updateDispatchSummary();
+  });
+  form.elements.cwd.addEventListener("input", updateDispatchSummary);
+  // Restore the last-used profile and group; fillOptions applies _pending once the option exists.
+  const saved = loadUiState().dispatch;
+  store.ui.dispatch = { ...saved };
+  if (saved.profile) form.elements.profile._pending = saved.profile;
+  if (saved.group) {
+    form.elements.group._pending = saved.group;
+    groupSelect._lastGroup = saved.group;
+  }
+}
+// --- end new-run-form ---
 
 // --- router ---
 function parseHash() {

@@ -30,6 +30,7 @@ GET|POST  /api/profiles
 PATCH     /api/profiles/{id-or-slug}
 GET|POST  /api/groups
 PATCH     /api/groups/{id-or-slug}
+GET       /api/host-directories
 GET       /api/attention
 POST      /api/attention/{id}/lease
 POST      /api/attention/{id}/answer
@@ -44,6 +45,8 @@ POST      /api/storage/plans/{id}/apply
 ```
 
 List/feed endpoints accept an `after` cursor where applicable; `/api/runs`, `/api/events`, and `/api/runs/{id}/events` also take `order=asc|desc`, `limit` (runs 1..200, events 1..500), and a `before` cursor (`id < before`) for paging backwards. The usage feed contains raw token facts only.
+
+`GET /api/host-directories?path=<abs>[&hidden=1]` backs the console's working-directory picker. Operator identities only (`device`, `network`); service tokens and run workers get 403. It lists one level: `{path, parent, git, branch, entries: [{name, path, git}], truncated}`. `entries` holds subdirectories only (no files, symlinks not followed), sorted case-insensitively, capped at 500; dot-directories appear only with `hidden=1`. `git` marks a `.git` entry; `branch` comes from `.git/HEAD` (null when detached or not a repo). An empty `path` means the operator's home. Paths must resolve under the operator's home or under a group `default_cwd`; anything else is 403. A missing path or a file is 404.
 
 `pause` parks the run at the next safe boundary: the current step is cancelled, the worktree is checkpointed, the DSH process stops, and capacity is released. The run reports `status: waiting` with a null `waiting_kind`, a `waiting_detail` beginning with `paused`, and `paused: true` in its payload. `resume` continues the same session.
 

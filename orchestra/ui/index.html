@@ -34,13 +34,18 @@
       <summary class="btn btn-primary">New run</summary>
       <form data-form="dispatch" class="dispatch">
         <label>Objective
-          <textarea name="objective" rows="3" required placeholder="Executable objective for the run"></textarea>
+          <textarea name="objective" rows="6" required placeholder="Executable objective for the run"></textarea>
         </label>
         <div class="grid2">
           <label>Profile <select name="profile" required data-options="profiles"></select></label>
           <label>Group <select name="group" data-options="groups"></select></label>
         </div>
-        <label>Working directory <input name="cwd" class="mono" placeholder="group default" spellcheck="false"></label>
+        <label>Working directory
+          <span class="cwd-row">
+            <input name="cwd" class="mono" placeholder="group default" spellcheck="false">
+            <button type="button" class="btn" data-action="browse-cwd">Browse…</button>
+          </span>
+        </label>
         <fieldset class="permission">
           <legend>Permission mode</legend>
           <label><input type="radio" name="permission_mode" value="read-only"> read-only</label>
@@ -68,6 +73,7 @@
             <textarea name="verify" rows="2" class="mono" placeholder="python&#10;-m&#10;unittest"></textarea>
           </label>
         </details>
+        <p class="dispatch-summary muted" aria-live="polite"></p>
         <p class="form-error" hidden></p>
         <p><button type="submit" class="btn btn-primary">Dispatch</button></p>
       </form>
@@ -276,6 +282,22 @@
 
 <!-- slice3-admin dialogs -->
 <!-- end slice3-admin dialogs -->
+
+<!-- new-run-form dialogs -->
+<dialog id="dir-picker" class="picker-dialog" aria-labelledby="dir-picker-title">
+  <h2 id="dir-picker-title">Choose a working directory</h2>
+  <nav id="dir-picker-crumbs" class="picker-crumbs mono" aria-label="Path"></nav>
+  <ol id="dir-picker-list" class="picker-list" aria-label="Subdirectories"></ol>
+  <p id="dir-picker-state" class="muted" hidden></p>
+  <p class="muted note">↑ ↓ move · Enter opens · Backspace goes up · Cmd/Ctrl+Enter uses this directory</p>
+  <div class="dialog-buttons">
+    <button type="button" class="btn" data-action="picker-up">Up</button>
+    <span class="grow"></span>
+    <button type="button" class="btn" data-action="dialog-cancel">Cancel</button>
+    <button type="button" class="btn btn-primary" data-action="picker-use">Use this directory</button>
+  </div>
+</dialog>
+<!-- end new-run-form dialogs -->
 
 <dialog id="confirm">
   <form method="dialog">
