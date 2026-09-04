@@ -424,6 +424,11 @@
   .fleet-usage .usage-window button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
   .fleet-usage table.plain { max-width: 48em; margin-top: var(--sp-2); }
   /* /fleet-usage */
+  /* logs */
+  .log-tools { display: flex; gap: var(--sp-4); align-items: center; flex-wrap: wrap; font-size: var(--fs-s); color: var(--muted); margin-bottom: var(--sp-2); }
+  .log-tools select { width: auto; margin: 0; }
+  .log-tail { background: var(--soft); border-radius: var(--radius-s); padding: var(--sp-3); font-size: var(--fs-xs); max-height: 70vh; overflow: auto; min-height: 6em; }
+  /* end logs */
 
   @media (max-width: 719px) {
     main { padding: var(--sp-3); }

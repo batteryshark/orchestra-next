@@ -113,6 +113,15 @@
   <section id="sec-artifacts" data-sec="artifacts" role="tabpanel" hidden></section>
   <section id="sec-usage" data-sec="usage" role="tabpanel" hidden></section>
   <section id="sec-evidence" data-sec="evidence" role="tabpanel" hidden></section>
+  <section id="sec-log" data-sec="log" role="tabpanel" hidden>
+    <div class="log-tools">
+      <label class="machine-toggle"><input type="checkbox" id="run-log-follow" checked> Follow</label>
+      <label class="machine-toggle">Tail <select id="run-log-bytes" aria-label="Tail size"><option value="65536">64 KiB</option><option value="262144">256 KiB</option></select></label>
+      <button class="btn" data-action="log-refresh" data-log="run">Refresh</button>
+      <span id="run-log-note" class="muted mono"></span>
+    </div>
+    <pre id="run-log" class="log-tail" tabindex="0" aria-label="ACP log"></pre>
+  </section>
 </section>
 
 <section id="view-attention" aria-label="Attention inbox" hidden>
@@ -192,7 +201,14 @@
   <!-- /config-tab:settings -->
   <!-- config-tab:logs -->
   <section id="config-logs" data-ctab="logs" role="tabpanel" hidden>
-    <p class="muted">Coming soon</p>
+    <div class="log-tools">
+      <label class="machine-toggle"><input type="checkbox" id="service-log-follow" checked> Follow</label>
+      <label class="machine-toggle">Tail <select id="service-log-bytes" aria-label="Tail size"><option value="65536">64 KiB</option><option value="262144">256 KiB</option></select></label>
+      <button class="btn" data-action="log-refresh" data-log="service">Refresh</button>
+      <a class="btn" href="/api/service-log/raw" download="daemon.log">Download</a>
+      <span id="service-log-note" class="muted mono"></span>
+    </div>
+    <pre id="service-log" class="log-tail" tabindex="0" aria-label="Service log"></pre>
   </section>
   <!-- /config-tab:logs -->
   <!-- config-tab:diagnostics -->
