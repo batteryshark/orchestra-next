@@ -32,6 +32,39 @@ class ApiTests(StateCase):
         self.assertEqual(fleet_events.data["data"][0]["run_id"], value["id"])
         self.assertEqual(self.call("GET", "/api/usage").data["data"], [])
 
+    def test_usage_summary_groups_by_route_inside_the_window(self):
+        from datetime import datetime, timedelta, timezone
+        self.call("POST", "/api/profiles", {"name": "Fake", "provider": "fake", "model": "model"})
+        first = self.call("POST", "/api/runs", {"request_id": "u1", "profile": "fake", "objective": "work", "cwd": str(self.repo)}).data["data"]
+        second = self.call("POST", "/api/runs", {"request_id": "u2", "profile": "fake", "objective": "work", "cwd": str(self.repo)}).data["data"]
+        now = datetime.now(timezone.utc)
+        rows = [  # (run, seq, provider, model, input, output, cache_read, cache_write, total, age)
+            (first["id"], 1, "claude", "opus", 100, 10, 5, 1, 116, timedelta(hours=1)),
+            (first["id"], 2, "claude", "opus", 200, 20, 0, 0, 220, timedelta(hours=2)),
+            (second["id"], 1, "fake", "model", 1000, 100, 0, 0, 1100, timedelta(hours=3)),
+            (second["id"], 2, "fake", "model", 5000, 500, 0, 0, 5500, timedelta(hours=30)),  # outside 24h, inside 7d
+        ]
+        for run_id, seq, provider, model, i, o, cr, cw, total, age in rows:
+            self.con.execute("INSERT INTO usage_events(run_id,session_id,source_seq,event_type,provider,model,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,total_tokens,cache_epoch,observed_at,raw_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,0,?,'{}')",
+                             (run_id, f"s{run_id}", seq, "usage", provider, model, i, o, cr, cw, total, (now - age).isoformat()))
+        self.con.commit()
+        day = self.call("GET", "/api/usage/summary").data["data"]
+        self.assertEqual(day["window"], "24h")
+        self.assertEqual(day["runs"], 2)
+        self.assertEqual(day["totals"], {"input": 1300, "output": 130, "cache_read": 5, "cache_write": 1, "total": 1436})
+        self.assertEqual([(r["provider"], r["model"], r["runs"], r["total"]) for r in day["routes"]], [("fake", "model", 1, 1100), ("claude", "opus", 1, 336)])
+        week = self.call("GET", "/api/usage/summary", query={"window": "7d"}).data["data"]
+        self.assertEqual(week["totals"]["total"], 6936)
+        self.assertEqual(week["routes"][0], {"provider": "fake", "model": "model", "runs": 1, "input": 6000, "output": 600, "cache_read": 0, "cache_write": 0, "total": 6600})
+        since = self.call("GET", "/api/usage/summary", query={"since": (now - timedelta(minutes=90)).isoformat()}).data["data"]
+        self.assertEqual(since["totals"]["total"], 116)
+        with self.assertRaises(api.Problem) as problem:
+            self.call("GET", "/api/usage/summary", query={"window": "1y"})
+        self.assertEqual(problem.exception.status, 400)
+        with self.assertRaises(api.Problem) as problem:
+            self.api.handle("GET", "/api/usage/summary", {}, None, auth.Identity("service", "s", frozenset({"attention-answer"})))
+        self.assertEqual(problem.exception.status, 403)
+
     def test_group_update_is_revision_guarded(self):
         created = self.call("POST", "/api/groups", {"name": "Build"}).data["data"]
         updated = self.call("PATCH", f"/api/groups/{created['slug']}",

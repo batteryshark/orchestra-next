@@ -213,10 +213,10 @@ function uiStateEncode(state) {
   const f = state.filters;
   const filters = { status: [...f.status], group: f.group, profile: f.profile, text: f.text };
   if ("strategy" in f) filters.strategy = f.strategy;
-  return JSON.stringify({ filters, machine: Boolean(state.ui.machine), section: state.ui.section, configTab: state.ui.configTab });
+  return JSON.stringify({ filters, machine: Boolean(state.ui.machine), section: state.ui.section, configTab: state.ui.configTab, usageWindow: state.ui.usageWindow });
 }
 function uiStateDecode(raw) {
-  const out = { filters: { status: new Set(), group: "", profile: "", text: "" }, machine: false, section: "activity", configTab: "profiles" };
+  const out = { filters: { status: new Set(), group: "", profile: "", text: "" }, machine: false, section: "activity", configTab: "profiles", usageWindow: "24h" };
   try {
     const value = JSON.parse(raw);
     const f = value?.filters ?? {};
@@ -225,6 +225,7 @@ function uiStateDecode(raw) {
     out.machine = value?.machine === true;
     if (SECTIONS.includes(value?.section)) out.section = value.section;
     if (CONFIG_TABS.includes(value?.configTab)) out.configTab = value.configTab;
+    if (value?.usageWindow === "7d") out.usageWindow = "7d";
   } catch {
     // malformed or absent: defaults
   }
@@ -822,6 +823,7 @@ async function tick() {
       store.snapshotsStale = false;
     }
     if (store.route.view === "run" && store.detail.id) await pollRun();
+    if (store.route.view === "fleet") await pollFleetUsage(); // fleet-usage
     if (errorCount) markDirty("nav");
     errorCount = 0;
     setBanner(null);
@@ -1277,6 +1279,7 @@ function renderFleet() {
   const list = document.getElementById("run-list");
   keyedList(list, visible, (run) => run.id, runSignature, buildRunRow, updateRunRow);
   document.querySelector("[data-action=load-more]").hidden = store.runsWindow.exhausted || store.runsWindow.floor === null;
+  renderFleetUsage(); // fleet-usage
 }
 
 function runRowChildren(run) {
@@ -2954,6 +2957,58 @@ const CONFIG_RENDERERS = {
 };
 // --- end config-tabs ---
 
+// fleet-usage
+// Fleet-wide raw token totals from GET /api/usage/summary; refreshed by tick() while Fleet is visible.
+store.usageSummary = null;
+store.ui.usageWindow = "24h";
+const USAGE_WINDOW_LABEL = { "24h": "Last 24h", "7d": "Last 7d" };
+function fleetUsageLine(summary, window) {
+  const label = USAGE_WINDOW_LABEL[window] || USAGE_WINDOW_LABEL["24h"];
+  if (!summary) return `${label} · usage loading…`;
+  const t = summary.totals || {};
+  const cached = (t.cache_read || 0) + (t.cache_write || 0);
+  return `${label} · ${summary.runs || 0} run${summary.runs === 1 ? "" : "s"} · ${fmt.tokens(t.total)} tokens (${fmt.tokens(t.input)} in / ${fmt.tokens(t.output)} out / ${fmt.tokens(cached)} cached)`;
+}
+async function pollFleetUsage() {
+  const window = store.ui.usageWindow;
+  const summary = await api.get(`/api/usage/summary?window=${window}`);
+  if (summary.window !== store.ui.usageWindow) return; // the toggle moved while this request was in flight
+  store.usageSummary = summary;
+  markDirty("fleet");
+}
+function renderFleetUsage() {
+  const summary = store.usageSummary;
+  const line = document.getElementById("fleet-usage-line");
+  line.textContent = fleetUsageLine(summary, store.ui.usageWindow);
+  line.title = summary ? `since ${summary.since}` : "";
+  for (const button of document.querySelectorAll("#fleet-usage [data-action=usage-window]")) button.setAttribute("aria-pressed", String(button.dataset.window === store.ui.usageWindow));
+  const box = document.getElementById("fleet-usage-table");
+  const routes = summary?.routes || [];
+  if (!routes.length) {
+    box.replaceChildren(el("p", { class: "muted", text: summary ? "No usage in this window." : "Loading…" }));
+    return;
+  }
+  const cell = (value) => el("td", { class: "mono", title: fmt.count(value), text: fmt.tokens(value) });
+  box.replaceChildren(el("table", { class: "plain" },
+    el("thead", null, el("tr", null, ...["Route", "Runs", "Input", "Output", "Cache read", "Cache write", "Total"].map((h) => el("th", { text: h })))),
+    el("tbody", null, ...routes.map((route) => el("tr", null,
+      el("td", { class: "mono", text: `${route.provider ?? "?"}/${route.model ?? "?"}` }),
+      el("td", { text: String(route.runs) }),
+      cell(route.input), cell(route.output), cell(route.cache_read), cell(route.cache_write), cell(route.total))))));
+}
+Object.assign(ACTIONS, {
+  "usage-window": (button) => {
+    const window = button.dataset.window in USAGE_WINDOW_LABEL ? button.dataset.window : "24h";
+    if (window === store.ui.usageWindow) return;
+    store.ui.usageWindow = window;
+    store.usageSummary = null;
+    saveUiState();
+    markDirty("fleet");
+    schedule(true);
+  },
+});
+// /fleet-usage
+
 // --- router ---
 function parseHash() {
   const segments = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
@@ -3127,6 +3182,7 @@ document.getElementById("show-machine").addEventListener("change", (event) => {
   store.ui.machine = saved.machine;
   store.ui.section = saved.section;
   store.ui.configTab = saved.configTab;
+  store.ui.usageWindow = saved.usageWindow; // fleet-usage
   document.getElementById("show-machine").checked = saved.machine;
   for (const field of document.querySelectorAll("[data-filter]")) {
     const value = store.filters[field.dataset.filter];

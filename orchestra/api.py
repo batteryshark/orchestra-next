@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import urllib.parse
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from orchestra import antigravity, artifacts, attention, auth, child_runs, claude, db, dsh, groups, messaging, paths, profiles, runs, storage, worktree
@@ -440,6 +441,9 @@ class API:
             after = int(query.get("after", 0) or 0)
             rows = self.con.execute("SELECT * FROM usage_events WHERE id>? ORDER BY id LIMIT 500", (after,))
             return Response(200, envelope(self.con, [dict(row) for row in rows]))
+        if parts == ["usage", "summary"] and method == "GET":
+            _need(identity, "read")
+            return Response(200, envelope(self.con, _usage_summary(self.con, query)))
         if parts == ["callbacks"] and method == "GET":
             _need(identity, "read")
             after = int(query.get("after", 0) or 0)
@@ -558,6 +562,26 @@ class API:
             item, token = auth.create_service_token(self.con, data.get("name", "service"), data.get("authorities"))
             return Response(201, envelope(self.con, {"service": item, "token": token}))
         raise Problem(404, "not found")
+
+
+USAGE_WINDOWS = {"24h": timedelta(hours=24), "7d": timedelta(days=7)}
+
+
+def _usage_summary(con, query: dict) -> dict:
+    """Raw token totals per provider/model over a window: no prices, no quota."""
+    window = str(query.get("window") or "24h")
+    if window not in USAGE_WINDOWS:
+        raise Problem(400, "window must be one of " + ", ".join(USAGE_WINDOWS))
+    since = str(query.get("since") or (datetime.now(timezone.utc) - USAGE_WINDOWS[window]).isoformat())
+    # ponytail: observed_at is unindexed; add an index if the table outgrows a 2 s poll.
+    rows = con.execute(
+        "SELECT provider, model, COUNT(DISTINCT run_id) AS runs, SUM(input_tokens) AS input, SUM(output_tokens) AS output,"
+        " SUM(cache_read_tokens) AS cache_read, SUM(cache_write_tokens) AS cache_write, SUM(total_tokens) AS total"
+        " FROM usage_events WHERE observed_at>=? GROUP BY provider, model ORDER BY total DESC", (since,)).fetchall()
+    routes = [dict(row) for row in rows]
+    totals = {key: sum(route[key] for route in routes) for key in ("input", "output", "cache_read", "cache_write", "total")}
+    runs = con.execute("SELECT COUNT(DISTINCT run_id) FROM usage_events WHERE observed_at>=?", (since,)).fetchone()[0]
+    return {"window": window, "since": since, "runs": runs, "totals": totals, "routes": routes}
 
 
 def openapi() -> dict:

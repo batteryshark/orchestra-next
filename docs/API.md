@@ -37,6 +37,7 @@ GET       /api/controls
 GET       /api/callbacks
 GET       /api/events
 GET       /api/usage
+GET       /api/usage/summary
 GET       /api/storage
 POST      /api/storage/plans
 GET       /api/storage/plans/{id}
@@ -44,6 +45,8 @@ POST      /api/storage/plans/{id}/apply
 ```
 
 List/feed endpoints accept an `after` cursor where applicable; `/api/runs`, `/api/events`, and `/api/runs/{id}/events` also take `order=asc|desc`, `limit` (runs 1..200, events 1..500), and a `before` cursor (`id < before`) for paging backwards. The usage feed contains raw token facts only.
+
+`GET /api/usage/summary?window=24h|7d` (default `24h`; or `since=<iso>` to set the lower bound directly; `read` authority) answers `{window, since, runs, totals, routes}`: `routes` is one row per `provider/model` with `runs` (distinct run ids), `input`, `output`, `cache_read`, `cache_write`, `total` token sums over the window, ordered by `total` descending; `totals` sums the same keys; `runs` counts distinct runs. One `GROUP BY` query over `usage_events.observed_at >= since`. Raw token facts only: no prices, currency, quota, or burn rate.
 
 `pause` parks the run at the next safe boundary: the current step is cancelled, the worktree is checkpointed, the DSH process stops, and capacity is released. The run reports `status: waiting` with a null `waiting_kind`, a `waiting_detail` beginning with `paused`, and `paused: true` in its payload. `resume` continues the same session.
 

@@ -409,6 +409,16 @@
   .audit-feed pre { background: var(--soft); border-radius: var(--radius-s); padding: var(--sp-2) var(--sp-3); font-size: var(--fs-xs); }
   /* end slice3-admin */
 
+  /* fleet-usage */
+  .fleet-usage { margin: 0 0 var(--sp-3); font-size: var(--fs-s); }
+  .fleet-usage summary { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; cursor: pointer; list-style: none; }
+  .fleet-usage summary::-webkit-details-marker { display: none; }
+  .fleet-usage .usage-window { display: inline-flex; gap: var(--sp-1); }
+  .fleet-usage .usage-window button { font-size: var(--fs-xs); padding: 0 var(--sp-2); border: 1px solid var(--line); border-radius: var(--radius-s); background: transparent; color: var(--muted); cursor: pointer; }
+  .fleet-usage .usage-window button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+  .fleet-usage table.plain { max-width: 48em; margin-top: var(--sp-2); }
+  /* /fleet-usage */
+
   @media (max-width: 719px) {
     main { padding: var(--sp-3); }
     .grid2 { grid-template-columns: 1fr; }
