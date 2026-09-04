@@ -104,6 +104,10 @@ sidecar reads it from another run-owned `0600` file; DSH receives only that
 ephemeral provider credential. A stable run header prevents identical prompts
 in different runs from sharing Claude sessions.
 
+## Operations
+
+Stop the daemon first. `orchestra-next backup [dest]` writes a consistent database copy, `bootstrap.json`, and `artifacts/` into `<dest or ~/.orchestra-next/backups>/orchestra-next-<UTC stamp>/` with a `manifest.json` of sha256 digests. `orchestra-next restore <backup>` verifies every digest and prints the plan; add `--apply` to move the current state into `~/.orchestra-next/trash/restore-<stamp>/` and copy the backup in. Nothing is deleted.
+
 ## Tests
 
 ```sh
