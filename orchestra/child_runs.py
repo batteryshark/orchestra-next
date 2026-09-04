@@ -69,6 +69,16 @@ def for_parent(con, parent_run_id: int) -> list[dict]:
     return [runs.payload(row) for row in con.execute("SELECT * FROM runs WHERE parent_run_id=? ORDER BY id", (parent_run_id,))]
 
 
+def descendants(con, run_id: int) -> list[int]:
+    """Every transitive child id, parents before children."""
+    found, frontier = [], [run_id]
+    while frontier:
+        rows = con.execute("SELECT id FROM runs WHERE parent_run_id IN (%s) ORDER BY id" % ",".join("?" for _ in frontier), frontier).fetchall()
+        frontier = [int(row["id"]) for row in rows]
+        found.extend(frontier)
+    return found
+
+
 def settle(con) -> list[int]:
     resumed = []
     parents = con.execute("SELECT * FROM runs WHERE status='waiting' AND waiting_kind='children'").fetchall()

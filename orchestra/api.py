@@ -223,7 +223,9 @@ class API:
             suffix = parts[2:]
             if not suffix and method == "GET":
                 _need(identity, "read", target=run_id)
-                return Response(200, envelope(self.con, runs.payload(run, detail=True)))
+                data = runs.payload(run, detail=True)
+                data["child_count"] = int(self.con.execute("SELECT COUNT(*) FROM runs WHERE parent_run_id=?", (run_id,)).fetchone()[0])
+                return Response(200, envelope(self.con, data))
             if suffix == ["events"] and method == "GET":
                 _need(identity, "read", target=run_id)
                 return Response(200, envelope(self.con, _event_page(self.con, query, run_id)))
@@ -244,6 +246,17 @@ class API:
                 data = _body(body)
                 item = messaging.queue(self.con, run_id, kind=kind, body=str(data.get("message") or data.get("reason") or ""), sender=_actor(identity))
                 return Response(202, envelope(self.con, item))
+            if suffix == ["stop-tree"] and method == "POST":
+                _need(identity, "stop", target=run_id)
+                reason = str(_body(body).get("reason") or "")
+                stopped = []
+                for target in [run_id] + child_runs.descendants(self.con, run_id):
+                    try:
+                        messaging.queue(self.con, target, kind="stop", body=reason, sender=_actor(identity))
+                    except messaging.RunClosed:
+                        continue
+                    stopped.append(target)
+                return Response(202, envelope(self.con, {"run_id": run_id, "stopped": stopped}))
             if suffix == ["reroute"] and method == "POST":
                 _need(identity, "reroute", target=run_id)
                 data = _body(body)

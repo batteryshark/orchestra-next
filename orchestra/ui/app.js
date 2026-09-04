@@ -1355,6 +1355,7 @@ function renderRunHeader(run) {
   if (allowed.includes("pause")) actions.push(el("button", { class: "btn", dataset: { action: "run-pause" }, title: "Park at the next safe boundary; Resume continues the same session", text: "Pause" }));
   if (allowed.includes("reroute")) actions.push(el("button", { class: "btn", dataset: { action: "run-reroute" }, title: "Continue the same goal on another provider/model", text: "Reroute…" }));
   if (allowed.includes("stop")) actions.push(el("button", { class: "btn btn-danger", dataset: { action: "run-stop" }, text: "Stop" }));
+  if (allowed.includes("stop") && run.child_count > 0) actions.push(el("button", { class: "btn btn-danger", dataset: { action: "run-stop-tree" }, title: "Queue a stop for this run and every active descendant", text: "Stop tree" }));
   if (run.request_snapshot?.allow_antigravity && run.workdir) actions.push(el("button", { class: "btn", dataset: { action: "run-delegate" }, title: "Read-only review of the worktree by Antigravity", text: "Delegate review…" }));
   if (allowed.includes("retry")) actions.push(el("button", { class: "btn btn-primary", dataset: { action: "run-retry" }, title: "Start a new run from the same request", text: "Retry" }));
   if (allowed.includes("continue")) actions.push(el("button", { class: "btn", dataset: { action: "run-continue" }, title: "Start a new run from the same request plus a direction", text: "Continue…" }));
@@ -2938,6 +2939,23 @@ function applyRoute() {
   markDirty("fleet", "run", "attention", "config", "nav");
 }
 // --- end router ---
+
+// --- stop-tree ---
+Object.assign(ACTIONS, {
+  "run-stop-tree": async (button) => {
+    const run = store.detail.run;
+    const reason = await confirmDialog({
+      title: `Stop run ${runLabel(run)} and its ${fmt.count(run.child_count)} children?`,
+      body: "A stop is queued for this run and every active descendant; each is delivered at its next safe boundary.",
+      confirmLabel: "Stop tree",
+      danger: true,
+      input: "Reason (optional)",
+    });
+    if (reason === false) return;
+    runVerb("stop-tree", button, { reason: reason || "stopped by operator" });
+  },
+});
+// --- end stop-tree ---
 
 // --- boot ---
 document.addEventListener("click", (event) => {
