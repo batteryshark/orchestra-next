@@ -208,6 +208,7 @@ def build_parser():
     for name in ("tell", "interrupt"):
         item = sub.add_parser(name); item.add_argument("message"); item.add_argument("--run", dest="run_id", type=int); item.set_defaults(func=cmd_control)
     stop = sub.add_parser("stop"); stop.add_argument("--run", dest="run_id", type=int); stop.add_argument("--reason", default="stopped by operator"); stop.set_defaults(func=cmd_control)
+    tree = sub.add_parser("stop-tree"); tree.add_argument("--run", dest="run_id", type=int); tree.add_argument("--reason", default="stopped by operator"); tree.set_defaults(func=cmd_control)
     resume = sub.add_parser("resume"); resume.add_argument("--run", dest="run_id", type=int); resume.set_defaults(func=cmd_control)
     route = sub.add_parser("reroute"); route.add_argument("provider"); route.add_argument("model"); route.add_argument("--effort"); route.add_argument("--message"); route.add_argument("--run", dest="run_id", type=int); route.set_defaults(func=cmd_reroute)
     for name in ("retry", "continue"):

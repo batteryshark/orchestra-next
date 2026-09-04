@@ -1,5 +1,7 @@
 import json
 import os
+import sys
+import time
 import unittest
 
 from orchestra import artifacts, attention, auth, child_runs, messaging, runs, scheduler
@@ -68,6 +70,24 @@ class DomainTests(StateCase):
         self.assertEqual(child["parent_run_id"], parent["id"])
         with self.assertRaises(child_runs.DelegationError):
             child_runs.create(self.con, parent["id"], {"request_id": "child2", "profile": "fake", "objective": "child"})
+
+    def test_attention_opened_fires_the_callback_once_per_request(self):
+        from orchestra import callbacks, config
+        sink = self.root / "callback.jsonl"
+        script = self.root / "callback.py"
+        script.write_text("import sys\nopen(sys.argv[1], 'a').write(sys.stdin.read() + '\\n')\n", encoding="utf-8")
+        config.write({"callback_command": [sys.executable, str(script), str(sink)]})
+        run, _ = runs.submit(self.con, self.request("callback"))
+        item = attention.open_request(self.con, run["id"], kind="permission", prompt="allow?", context={"tool": "bash"})
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and not sink.is_file():
+            time.sleep(0.05)
+        time.sleep(0.2)
+        lines = [json.loads(line) for line in sink.read_text(encoding="utf-8").splitlines() if line]
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0]["event"], "attention.opened")
+        self.assertEqual(lines[0]["data"], {"attention_id": item["attention_id"], "run_id": run["id"], "kind": "permission", "blocking": True})
+        self.assertIn("attention.opened", callbacks.EVENTS)
 
     def test_artifact_publication_is_immutable_and_cannot_escape(self):
         run, _ = runs.submit(self.con, self.request("artifact"))

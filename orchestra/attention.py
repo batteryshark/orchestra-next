@@ -5,7 +5,7 @@ import json
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from orchestra import db
+from orchestra import callbacks, config, db
 
 
 class AttentionError(ValueError):
@@ -24,6 +24,7 @@ def open_request(con, run_id: int, *, kind: str, prompt: str, context=None,
             con.execute("UPDATE runs SET status='waiting',waiting_kind=?,waiting_detail=?,updated_at=?,revision=revision+1 WHERE id=?", (waiting_kind, attention_id, stamp, run_id))
         db.append_event(con, run_id, "attention.opened", {"attention_id": attention_id, "kind": kind})
         db.record_control(con, actor=actor, action="attention.open", outcome="ok", target_type="attention", target_id=attention_id)
+    callbacks.emit(config.callback_command(), "attention.opened", {"attention_id": attention_id, "run_id": run_id, "kind": kind, "blocking": bool(blocking)}, audit_db=con)
     return get(con, attention_id)
 
 

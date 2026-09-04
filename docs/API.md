@@ -25,6 +25,7 @@ POST      /api/runs/{id}/resume
 POST      /api/runs/{id}/retry
 POST      /api/runs/{id}/continue
 POST      /api/runs/{id}/stop
+POST      /api/runs/{id}/stop-tree
 
 GET|POST  /api/profiles
 PATCH     /api/profiles/{id-or-slug}
@@ -44,6 +45,8 @@ POST      /api/storage/plans/{id}/apply
 ```
 
 List/feed endpoints accept an `after` cursor where applicable; `/api/runs`, `/api/events`, and `/api/runs/{id}/events` also take `order=asc|desc`, `limit` (runs 1..200, events 1..500), and a `before` cursor (`id < before`) for paging backwards. The usage feed contains raw token facts only.
+
+`stop-tree` (body `{reason?}`, authority `stop`) queues a `stop` control for the run and every non-terminal descendant, walking child runs recursively. It answers `202` with `{run_id, stopped: [ids]}`; already-terminal runs are skipped. The CLI form is `orchestra-next stop-tree --run ID [--reason TEXT]`.
 
 `pause` parks the run at the next safe boundary: the current step is cancelled, the worktree is checkpointed, the DSH process stops, and capacity is released. The run reports `status: waiting` with a null `waiting_kind`, a `waiting_detail` beginning with `paused`, and `paused: true` in its payload. `resume` continues the same session.
 

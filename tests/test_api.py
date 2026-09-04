@@ -2,7 +2,7 @@ import json
 import os
 import unittest
 
-from orchestra import api, auth, config, db, dsh, scheduler
+from orchestra import api, auth, child_runs, config, db, dsh, scheduler
 from tests.common import StateCase
 
 
@@ -200,6 +200,29 @@ class ConsoleApiTests(StateCase):
         self.assertTrue(value["paused"])
         listed = self.call("GET", "/api/runs", query={"status": "waiting"}).data["data"]
         self.assertTrue(listed[0]["paused"])
+
+    def test_stop_tree_queues_a_stop_for_every_active_descendant(self):
+        self.create_profile()
+        root = self.submit("tree-root", max_children=2, max_child_tier=2)
+        with self.con:
+            self.con.execute("UPDATE runs SET status='running' WHERE id=?", (root["id"],))
+        child = child_runs.create(self.con, root["id"], {"request_id": "tree-child", "profile": "fake", "objective": "child"})
+        with self.con:
+            self.con.execute("UPDATE runs SET status='running' WHERE id=?", (child["id"],))
+        grandchild = child_runs.create(self.con, child["id"], {"request_id": "tree-grandchild", "profile": "fake", "objective": "grandchild"})
+        done = child_runs.create(self.con, root["id"], {"request_id": "tree-done", "profile": "fake", "objective": "done"})
+        with self.con:
+            self.con.execute("UPDATE runs SET status='completed' WHERE id=?", (done["id"],))
+        self.assertEqual(self.call("GET", f"/api/runs/{root['id']}").data["data"]["child_count"], 2)
+        receipt = self.call("POST", f"/api/runs/{root['id']}/stop-tree", {"reason": "abort"})
+        self.assertEqual(receipt.status, 202)
+        self.assertEqual(receipt.data["data"]["stopped"], [root["id"], child["id"], grandchild["id"]])
+        kinds = self.con.execute("SELECT run_id,kind,body FROM messages WHERE kind='stop' ORDER BY run_id").fetchall()
+        self.assertEqual([(row["run_id"], row["body"]) for row in kinds], [(root["id"], "abort"), (child["id"], "abort"), (grandchild["id"], "abort")])
+        reader = auth.Identity("service", "r", frozenset({"read"}))
+        with self.assertRaises(api.Problem) as problem:
+            self.call("POST", f"/api/runs/{root['id']}/stop-tree", {}, identity=reader)
+        self.assertEqual(problem.exception.status, 403)
 
     def test_merge_refusal_is_a_409_with_the_reason(self):
         self.create_profile()
