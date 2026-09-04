@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import re
 import subprocess
 import sys
@@ -11,6 +13,8 @@ from pathlib import Path
 
 from orchestra import acp, attention, auth, callbacks, claude, config, db, dsh, journal, messaging, paths, runs, worktree
 from orchestra.contracts import PERMISSION_WAIT_SECONDS, VERIFICATION_REPAIRS
+
+log = logging.getLogger("orchestra.supervise")
 
 POLL_SECONDS = 0.25
 MAX_VERIFY_OUTPUT = 32_000
@@ -183,10 +187,14 @@ def _finish(con, run_id: int, status: str, workdir_path: Path, *, summary=None, 
         messaging.close_pending(con, run_id)
         db.append_event(con, run_id, "run.terminal", {"status": status, "end_ref": evidence["end_ref"]})
         db.record_control(con, actor="orchestra", action="run.finish", outcome=status, target_type="run", target_id=run_id)
+    log.info("run %s finished: %s%s", run_id, status, f" ({error})" if error else "")
     callbacks.emit(config.callback_command(), "run.terminal", {"run_id": run_id, "status": status}, audit_db=con)
 
 
 def supervise(run_id: int) -> int:
+    from orchestra.daemon import configure_logging
+    configure_logging()
+    log.info("run %s supervisor started: pid=%s", run_id, os.getpid())
     con = db.connect()
     peer = None
     sidecar = None
@@ -420,5 +428,5 @@ def supervise(run_id: int) -> int:
 
 
 def spawn_supervisor(run_id: int) -> int:
-    process = subprocess.Popen([sys.executable, "-m", "orchestra", "supervise", str(run_id)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    process = subprocess.Popen([sys.executable, "-m", "orchestra", "supervise", str(run_id)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=None, start_new_session=True)  # stderr inherits the daemon log
     return process.pid

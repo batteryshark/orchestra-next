@@ -4,15 +4,17 @@ from __future__ import annotations
 import http.cookies
 import ipaddress
 import json
+import logging
 import os
 import shutil
-import sys
 import threading
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from orchestra import api, auth, config, db
+
+log = logging.getLogger("orchestra.http")
 
 UI_DIR = Path(__file__).with_name("ui")
 STATIC = {
@@ -170,12 +172,14 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, LookupError, auth.AuthError) as exc:
             self._json(400, {"error": {"message": str(exc)}})
         except Exception as exc:
-            print(f"orchestra-next: {self.command} {parsed.path}: {exc!r}", file=sys.stderr)
+            log.exception("%s %s failed", self.command, parsed.path)
             self._json(500, {"error": {"message": "internal error; see the daemon log"}})
         finally:
             con.close()
 
     def _json(self, status, value, headers=None):
+        if status >= 400 or self.command not in ("GET", "HEAD"):  # polls stay silent
+            log.info("%s %s -> %s", self.command, self.path.split("?")[0], status)
         raw = json.dumps(value, ensure_ascii=False, default=str).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
