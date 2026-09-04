@@ -100,6 +100,27 @@ class DocumentConformanceTests(unittest.TestCase):
         self.assertEqual(value["bad"]["section"], "audit")
         self.assertEqual(value["tabs"], tabs)
 
+    def test_fleet_usage_strip_is_wired(self):
+        for marker in ("<!-- fleet-usage -->", "<!-- /fleet-usage -->", '<details id="fleet-usage"', 'id="fleet-usage-line"', 'id="fleet-usage-table"',
+                       'data-action="usage-window" data-window="24h"', 'data-action="usage-window" data-window="7d"'):
+            self.assertIn(marker, self.html, marker)
+        block = self.js.split("\n// fleet-usage\n", 1)[1].split("// /fleet-usage", 1)[0]
+        for name in ('"usage-window"', "function pollFleetUsage", "function renderFleetUsage", "/api/usage/summary?window="):
+            self.assertIn(name, block, name)
+        self.assertIn("usageWindow: state.ui.usageWindow", self.js)  # persisted in orchestra-next.ui
+        self.assertIn("/* fleet-usage */", self.css)
+        if shutil.which("node") is None:
+            self.skipTest("node is unavailable")
+        from tests.test_ui_js import run_node, slice_section
+        pure = block.split("async function pollFleetUsage", 1)[0].replace("store.usageSummary = null;", "").replace('store.ui.usageWindow = "24h";', "")
+        script = slice_section("constants") + slice_section("fmt") + pure + """
+          const summary = { runs: 3, totals: { input: 41200, output: 900, cache_read: 3000000, cache_write: 100000, total: 3142100 } };
+          console.log(JSON.stringify({ day: fleetUsageLine(summary, "24h"), week: fleetUsageLine({ runs: 1, totals: {} }, "7d"), loading: fleetUsageLine(null, "24h") }));"""
+        value = run_node(script)
+        self.assertEqual(value["day"], "Last 24h · 3 runs · 3.1M tokens (41.2k in / 900 out / 3.1M cached)")
+        self.assertEqual(value["week"], "Last 7d · 1 run · 0 tokens (0 in / 0 out / 0 cached)")
+        self.assertEqual(value["loading"], "Last 24h · usage loading…")
+
     def test_dark_scheme_and_reduced_motion_are_declared(self):
         self.assertIn("prefers-color-scheme: dark", self.css)
         self.assertIn("prefers-reduced-motion: reduce", self.css)

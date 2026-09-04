@@ -73,6 +73,18 @@
       </form>
     </details>
   </div>
+  <!-- fleet-usage -->
+  <details id="fleet-usage" class="fleet-usage">
+    <summary>
+      <span id="fleet-usage-line" class="muted">Last 24h · usage loading…</span>
+      <span class="usage-window" role="group" aria-label="Usage window">
+        <button type="button" data-action="usage-window" data-window="24h" aria-pressed="true">24h</button>
+        <button type="button" data-action="usage-window" data-window="7d" aria-pressed="false">7d</button>
+      </span>
+    </summary>
+    <div id="fleet-usage-table"></div>
+  </details>
+  <!-- /fleet-usage -->
   <div class="filter-bar" role="search">
     <input id="filter-text" data-filter="text" type="search" placeholder="Filter runs ( / )" aria-label="Filter runs">
     <select data-filter="group" data-options="groups" aria-label="Filter by group"><option value="">All groups</option></select>
