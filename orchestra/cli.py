@@ -7,7 +7,7 @@ import os
 import sys
 import uuid
 
-from orchestra import auth, claude, client, config, daemon, db, dsh, paths, supervise
+from orchestra import auth, backup, claude, client, config, daemon, db, dsh, paths, supervise
 
 API = "/api"
 
@@ -181,6 +181,14 @@ def cmd_service(args):
     _print(_client(args).post(API + "/auth/service-tokens", {"name": args.name, "authorities": args.authorities}))
 
 
+def cmd_backup(args):
+    _print(backup.backup(args.dest))
+
+
+def cmd_restore(args):
+    _print(backup.restore(args.backup, apply=args.apply))
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="orchestra-next", description="Durable DSH-only agent execution")
     parser.add_argument("--url")
@@ -222,6 +230,8 @@ def build_parser():
     pair = sub.add_parser("pair"); pair.set_defaults(func=cmd_pair)
     service = sub.add_parser("service-token"); service.add_argument("name"); service.add_argument("authorities", nargs="+"); service.set_defaults(func=cmd_service)
     storage_parser = sub.add_parser("storage"); storage_parser.set_defaults(func=cmd_list)
+    bak = sub.add_parser("backup"); bak.add_argument("dest", nargs="?"); bak.set_defaults(func=cmd_backup)
+    res = sub.add_parser("restore"); res.add_argument("backup"); res.add_argument("--apply", action="store_true"); res.set_defaults(func=cmd_restore)
     return parser
 
 
