@@ -171,7 +171,7 @@ class UiLogicTests(unittest.TestCase):
     def test_ui_state_round_trips_and_tolerates_malformed_input(self):
         value = self.evaluate("""(() => {
           const state = { filters: { status: new Set(["failed", "running"]), group: "g1", profile: "7", text: "auth", strategy: "swarm" },
-                          ui: { follow: false, machine: true, section: "usage" } };
+                          ui: { follow: false, machine: true, section: "usage", configTab: "audit" } };
           const back = uiStateDecode(uiStateEncode(state));
           const bad = [uiStateDecode(null), uiStateDecode("{not json"), uiStateDecode('{"filters":{"status":"x","group":3},"section":"nope","machine":"yes"}')];
           return {
@@ -186,9 +186,9 @@ class UiLogicTests(unittest.TestCase):
         self.assertNotIn("follow", value["raw"])
         self.assertEqual(value["raw"]["filters"]["strategy"], "swarm")
         self.assertEqual(value["back"], {"filters": {"status": ["failed", "running"], "group": "g1", "profile": "7", "text": "auth", "strategy": "swarm"},
-                                         "machine": True, "section": "usage"})
+                                         "machine": True, "section": "usage", "configTab": "audit"})
         self.assertFalse(value["no_strategy"])
-        defaults = {"filters": {"status": [], "group": "", "profile": "", "text": ""}, "machine": False, "section": "activity"}
+        defaults = {"filters": {"status": [], "group": "", "profile": "", "text": ""}, "machine": False, "section": "activity", "configTab": "profiles"}
         self.assertEqual(value["bad"], [defaults] * 3)
 
 

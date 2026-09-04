@@ -11,6 +11,7 @@ const TAIL_THRESHOLD = 72;
 const CLIP_CHARS = 2000;
 const HARD_SLICE = 50000;
 const SECTIONS = ["activity", "changes", "artifacts", "usage", "evidence"];
+const CONFIG_TABS = ["profiles", "groups", "identities", "storage", "audit", "settings", "logs", "diagnostics"];
 const ACTIVE_STATUSES = new Set(["queued", "starting", "running", "waiting"]);
 const STATUS_GROUPS = {
   queued: ["queued"],
@@ -212,10 +213,10 @@ function uiStateEncode(state) {
   const f = state.filters;
   const filters = { status: [...f.status], group: f.group, profile: f.profile, text: f.text };
   if ("strategy" in f) filters.strategy = f.strategy;
-  return JSON.stringify({ filters, machine: Boolean(state.ui.machine), section: state.ui.section });
+  return JSON.stringify({ filters, machine: Boolean(state.ui.machine), section: state.ui.section, configTab: state.ui.configTab });
 }
 function uiStateDecode(raw) {
-  const out = { filters: { status: new Set(), group: "", profile: "", text: "" }, machine: false, section: "activity" };
+  const out = { filters: { status: new Set(), group: "", profile: "", text: "" }, machine: false, section: "activity", configTab: "profiles" };
   try {
     const value = JSON.parse(raw);
     const f = value?.filters ?? {};
@@ -223,6 +224,7 @@ function uiStateDecode(raw) {
     for (const key of ["group", "profile", "text", "strategy"]) if (typeof f[key] === "string") out.filters[key] = f[key];
     out.machine = value?.machine === true;
     if (SECTIONS.includes(value?.section)) out.section = value.section;
+    if (CONFIG_TABS.includes(value?.configTab)) out.configTab = value.configTab;
   } catch {
     // malformed or absent: defaults
   }
@@ -589,7 +591,7 @@ const store = {
     loaded: { changes: false, usage: false, artifacts: false },
   },
   filters: { status: new Set(), group: "", profile: "", text: "" },
-  ui: { follow: true, machine: false, section: "activity", inflight: new Set(), dispatchRequestId: crypto.randomUUID() },
+  ui: { follow: true, machine: false, section: "activity", configTab: "profiles", inflight: new Set(), dispatchRequestId: crypto.randomUUID() },
 };
 
 // Retained state lives in one browser storage entry; storage may be unavailable.
@@ -1918,17 +1920,12 @@ function syncCountdownTimer() {
 }
 
 function renderConfig() {
-  renderConfigProfiles();
-  renderConfigGroups();
-  renderConfigIdentities();
-  renderConfigPairing();
-  renderConfigStorage();
-  renderConfigAudit();
-  renderConfigDiagnostics();
+  renderConfigTabs();
+  CONFIG_RENDERERS[store.ui.configTab]();
 }
 
 function renderConfigIdentities() {
-  const box = document.getElementById("config-identities");
+  const box = document.getElementById("config-identities-list");
   const data = store.identities;
   if (!data || data.revision !== store.boardRevision) loadIdentities();
   if (!data) {
@@ -1997,7 +1994,7 @@ function renderConfigGroups() {
 }
 
 function renderConfigDiagnostics() {
-  const diagnostics = document.getElementById("config-diagnostics");
+  const diagnostics = document.getElementById("config-diagnostics-facts");
   const kv = el("dl", { class: "kv" });
   const fact = (name, value) => kv.append(el("dt", { text: name }), el("dd", { class: "mono", text: String(value ?? "") }));
   if (store.me) fact("identity", store.me.kind === "network" ? `trusted network peer ${store.me.id}` : `${store.me.kind} · ${store.me.device?.name ?? store.me.id}`);
@@ -2433,7 +2430,7 @@ function loadIdentities() {
     const [devices, tokens] = await Promise.all([api.get("/api/auth/devices"), api.get("/api/auth/service-tokens")]);
     store.identities = { devices, tokens, revision };
     markDirty("config");
-  }).catch((error) => configError(document.getElementById("config-identities"), error.message));
+  }).catch((error) => configError(document.getElementById("config-identities-list"), error.message));
 }
 
 function loadCatalog(form) {
@@ -2538,12 +2535,12 @@ Object.assign(ACTIONS, {
   "device-revoke": async (button) => {
     const sure = await confirmDialog({ title: `Revoke device ${button.dataset.name}?`, body: "The device loses access immediately.", confirmLabel: "Revoke", danger: true });
     if (!sure) return;
-    return configMutation(`device:${button.dataset.id}`, button, "config-identities", () => api.post(`/api/auth/devices/${button.dataset.id}/revoke`), "Device revoked");
+    return configMutation(`device:${button.dataset.id}`, button, "config-identities-list", () => api.post(`/api/auth/devices/${button.dataset.id}/revoke`), "Device revoked");
   },
   "token-revoke": async (button) => {
     const sure = await confirmDialog({ title: `Revoke service token ${button.dataset.name}?`, body: "Integrations that hold this token lose access immediately.", confirmLabel: "Revoke", danger: true });
     if (!sure) return;
-    return configMutation(`token:${button.dataset.id}`, button, "config-identities", () => api.post(`/api/auth/service-tokens/${button.dataset.id}/revoke`), "Service token revoked");
+    return configMutation(`token:${button.dataset.id}`, button, "config-identities-list", () => api.post(`/api/auth/service-tokens/${button.dataset.id}/revoke`), "Service token revoked");
   },
 });
 
@@ -2721,7 +2718,7 @@ function syncPairTimer() {
   if (pairTimer || !document.querySelector("#config-pairing .countdown")) return;
   pairTimer = setInterval(() => {
     const node = document.querySelector("#config-pairing .countdown");
-    const live = node && !document.getElementById("view-config").hidden;
+    const live = node && !node.closest("[hidden]");
     if (live) {
       node.textContent = fmt.countdown(node.dataset.expires);
       node.classList.toggle("urgent", node.textContent !== "expired" && Date.parse(node.dataset.expires) - Date.now() < 60000);
@@ -2899,6 +2896,64 @@ Object.assign(FORMS, {
 });
 // --- end slice3-admin ---
 
+// --- config-tabs ---
+// One Config tab renders at a time, so paged or expensive data (audit feeds,
+// storage report, identities) loads only when its tab is shown.
+function renderConfigTabs() {
+  const tabs = document.getElementById("config-tabs");
+  const current = store.ui.configTab;
+  keyedList(tabs, CONFIG_TABS, (tab) => tab,
+    (tab) => `${tab === current}`,
+    (tab) => el("button", { role: "tab", "aria-selected": String(tab === current), dataset: { action: "config-tab", tab }, text: tab[0].toUpperCase() + tab.slice(1) }),
+    (node, tab) => node.setAttribute("aria-selected", String(tab === current)));
+  for (const panel of document.querySelectorAll("[data-ctab]")) panel.hidden = panel.dataset.ctab !== current;
+}
+
+Object.assign(ACTIONS, {
+  "config-tab": (button) => { location.hash = `#/config/${button.dataset.tab}`; },
+});
+
+// config-tab:identities
+function renderConfigIdentitiesTab() {
+  renderConfigIdentities();
+  renderConfigPairing();
+}
+// /config-tab:identities
+
+// config-tab:settings
+function renderConfigSettings() {
+  // Shell: the Settings tab is static until its feature lands here.
+}
+// /config-tab:settings
+
+// config-tab:logs
+function renderConfigLogs() {
+  // Shell: the Logs tab is static until its feature lands here.
+}
+// /config-tab:logs
+
+const CONFIG_RENDERERS = {
+  // config-tab:profiles
+  profiles: renderConfigProfiles,
+  // /config-tab:profiles
+  // config-tab:groups
+  groups: renderConfigGroups,
+  // /config-tab:groups
+  identities: renderConfigIdentitiesTab,
+  // config-tab:storage
+  storage: renderConfigStorage,
+  // /config-tab:storage
+  // config-tab:audit
+  audit: renderConfigAudit,
+  // /config-tab:audit
+  settings: renderConfigSettings,
+  logs: renderConfigLogs,
+  // config-tab:diagnostics
+  diagnostics: renderConfigDiagnostics,
+  // /config-tab:diagnostics
+};
+// --- end config-tabs ---
+
 // --- router ---
 function parseHash() {
   const segments = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
@@ -2907,7 +2962,7 @@ function parseHash() {
     return { view: "run", runId: Number(segments[1]), section };
   }
   if (segments[0] === "attention") return { view: "attention", runId: null, section: null };
-  if (segments[0] === "config") return { view: "config", runId: null, section: null };
+  if (segments[0] === "config") return { view: "config", runId: null, section: CONFIG_TABS.includes(segments[1]) ? segments[1] : store.ui.configTab };
   if (segments[0] === "pair" && segments[1]) return { view: "pair", runId: null, section: null, code: segments[1] };
   return { view: "fleet", runId: null, section: null };
 }
@@ -2933,6 +2988,10 @@ function applyRoute() {
   }
   if (route.view === "run" && route.section !== store.ui.section) {
     store.ui.section = route.section;
+    saveUiState();
+  }
+  if (route.view === "config" && route.section !== store.ui.configTab) {
+    store.ui.configTab = route.section;
     saveUiState();
   }
   markDirty("fleet", "run", "attention", "config", "nav");
@@ -3042,6 +3101,10 @@ document.addEventListener("keydown", (event) => {
       setFollow(true);
     }
   }
+  if (store.route.view === "config" && (event.key === "[" || event.key === "]")) {
+    const at = CONFIG_TABS.indexOf(store.ui.configTab);
+    location.hash = `#/config/${CONFIG_TABS[(at + (event.key === "]" ? 1 : CONFIG_TABS.length - 1)) % CONFIG_TABS.length]}`;
+  }
 });
 
 document.getElementById("feed").addEventListener("scroll", () => {
@@ -3063,6 +3126,7 @@ document.getElementById("show-machine").addEventListener("change", (event) => {
   for (const key of Object.keys(store.filters)) if (key in saved.filters) store.filters[key] = saved.filters[key];
   store.ui.machine = saved.machine;
   store.ui.section = saved.section;
+  store.ui.configTab = saved.configTab;
   document.getElementById("show-machine").checked = saved.machine;
   for (const field of document.querySelectorAll("[data-filter]")) {
     const value = store.filters[field.dataset.filter];

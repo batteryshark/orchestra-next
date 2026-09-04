@@ -111,15 +111,42 @@
 
 <section id="view-config" aria-label="Configuration" hidden>
   <h1>Configuration</h1>
-  <section><h2>Profiles</h2><div id="config-profiles"></div></section>
-  <section><h2>Groups</h2><div id="config-groups"></div></section>
-  <section><h2>Devices and service tokens</h2><div id="config-identities"></div></section>
-  <section><h2>Pair a device</h2><div id="config-pairing"></div></section>
-  <section><h2>Storage</h2><div id="config-storage"></div></section>
-  <section><h2>Audit</h2><div id="config-audit"></div></section>
-  <section><h2>Diagnostics</h2><div id="config-diagnostics"></div>
+  <div id="config-tabs" class="run-tabs" role="tablist"></div>
+  <!-- config-tab:profiles -->
+  <section id="config-profiles" data-ctab="profiles" role="tabpanel" hidden></section>
+  <!-- /config-tab:profiles -->
+  <!-- config-tab:groups -->
+  <section id="config-groups" data-ctab="groups" role="tabpanel" hidden></section>
+  <!-- /config-tab:groups -->
+  <!-- config-tab:identities -->
+  <section id="config-identities" data-ctab="identities" role="tabpanel" hidden>
+    <div id="config-identities-list"></div>
+    <h3 class="config-sub">Pair a device</h3>
+    <div id="config-pairing"></div>
+  </section>
+  <!-- /config-tab:identities -->
+  <!-- config-tab:storage -->
+  <section id="config-storage" data-ctab="storage" role="tabpanel" hidden></section>
+  <!-- /config-tab:storage -->
+  <!-- config-tab:audit -->
+  <section id="config-audit" data-ctab="audit" role="tabpanel" hidden></section>
+  <!-- /config-tab:audit -->
+  <!-- config-tab:settings -->
+  <section id="config-settings" data-ctab="settings" role="tabpanel" hidden>
+    <p class="muted">Coming soon</p>
+  </section>
+  <!-- /config-tab:settings -->
+  <!-- config-tab:logs -->
+  <section id="config-logs" data-ctab="logs" role="tabpanel" hidden>
+    <p class="muted">Coming soon</p>
+  </section>
+  <!-- /config-tab:logs -->
+  <!-- config-tab:diagnostics -->
+  <section id="config-diagnostics" data-ctab="diagnostics" role="tabpanel" hidden>
+    <div id="config-diagnostics-facts"></div>
     <p><button class="btn" data-action="logout">Log out this browser</button></p>
   </section>
+  <!-- /config-tab:diagnostics -->
 </section>
 
 <section id="view-pairing" aria-label="Pair this browser" hidden>
