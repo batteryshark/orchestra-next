@@ -10,7 +10,7 @@ const PAGE_RUNS = 200;
 const TAIL_THRESHOLD = 72;
 const CLIP_CHARS = 2000;
 const HARD_SLICE = 50000;
-const SECTIONS = ["activity", "changes", "artifacts", "usage", "evidence"];
+const SECTIONS = ["activity", "changes", "artifacts", "usage", "evidence", "log"];
 const CONFIG_TABS = ["profiles", "groups", "identities", "storage", "audit", "settings", "logs", "diagnostics"];
 const ACTIVE_STATUSES = new Set(["queued", "starting", "running", "waiting"]);
 const STATUS_GROUPS = {
@@ -1801,6 +1801,7 @@ function renderRun() {
   if (section === "artifacts") renderArtifacts();
   if (section === "usage") renderUsage();
   if (section === "evidence") renderEvidence();
+  if (section === "log") renderRunLog();
 }
 
 const KIND_CLASSES = { permission: "warn", protocol_failure: "bad", verification: "warn" };
@@ -2896,6 +2897,89 @@ Object.assign(FORMS, {
 });
 // --- end slice3-admin ---
 
+// --- logs ---
+// Two log tails share one poller: the service log (Config → Logs) and a run's
+// raw ACP log (run section "Log"). Each fetches `?after=<size>` and appends;
+// a changed offset (a shrunken file, or more than one tail appended) replaces the text.
+const LOG_REFRESH = 3000;
+const LOGS = {
+  service: { url: () => "/api/service-log", end: null, timer: null, runId: null,
+    visible: () => store.route.view === "config" && store.ui.configTab === "logs",
+    live: () => true },
+  run: { url: () => `/api/runs/${store.detail.id}/log`, end: null, timer: null, runId: null,
+    visible: () => store.route.view === "run" && store.route.section === "log" && Boolean(store.detail.id),
+    live: () => ACTIVE_STATUSES.has(store.detail.run?.status) },
+};
+
+function logNode(name, part) {
+  return document.getElementById(part ? `${name}-log-${part}` : `${name}-log`);
+}
+
+async function fetchLog(name) {
+  const log = LOGS[name];
+  const pre = logNode(name);
+  const note = logNode(name, "note");
+  const bytes = logNode(name, "bytes").value;
+  const after = log.end === null ? "" : `&after=${log.end}`;
+  let value;
+  try {
+    value = await api.get(`${log.url()}?bytes=${bytes}${after}`);
+  } catch (error) {
+    note.textContent = error.message;
+    return;
+  }
+  if (log.end === null || value.offset !== log.end) pre.textContent = value.text;
+  else if (value.text) pre.textContent += value.text;
+  log.end = value.size;
+  note.textContent = value.note || `${value.path} · ${fmt.bytes(value.size)}${value.truncated ? " · tail" : ""}`;
+  if (logNode(name, "follow").checked) pre.scrollTop = pre.scrollHeight;
+}
+
+// Start or stop a tail's timer from its visibility; called on every render of its panel and on route changes.
+function syncLog(name) {
+  const log = LOGS[name];
+  const visible = log.visible() && !document.hidden;
+  if (name === "run" && log.runId !== store.detail.id) {
+    log.runId = store.detail.id;
+    log.end = null;
+    logNode(name).textContent = "";
+  }
+  if (!visible || !log.live()) {
+    clearTimeout(log.timer);
+    log.timer = null;
+    if (visible && log.end === null) fetchLog(name);
+    return;
+  }
+  if (log.timer !== null) return;
+  const loop = async () => {
+    if (!log.visible() || document.hidden) { log.timer = null; return; }
+    await fetchLog(name);
+    if (log.timer !== null) log.timer = setTimeout(loop, LOG_REFRESH);
+  };
+  log.timer = setTimeout(loop, 0);
+}
+
+function renderRunLog() {
+  syncLog("run");
+}
+
+Object.assign(ACTIONS, {
+  "log-refresh": (button) => act(`log:${button.dataset.log}`, button, () => fetchLog(button.dataset.log)),
+});
+
+for (const name of Object.keys(LOGS)) {
+  logNode(name, "bytes").addEventListener("change", () => { LOGS[name].end = null; fetchLog(name); });
+  logNode(name, "follow").addEventListener("change", (event) => { if (event.target.checked) logNode(name).scrollTop = logNode(name).scrollHeight; });
+  logNode(name).addEventListener("scroll", () => {
+    const pre = logNode(name);
+    logNode(name, "follow").checked = pre.scrollHeight - pre.scrollTop - pre.clientHeight < TAIL_THRESHOLD;
+  });
+}
+// Deferred: the router's own hashchange listener registers later, and syncLog reads store.route after it ran.
+window.addEventListener("hashchange", () => setTimeout(() => { for (const name of Object.keys(LOGS)) syncLog(name); }, 0));
+document.addEventListener("visibilitychange", () => { for (const name of Object.keys(LOGS)) syncLog(name); });
+// --- end logs ---
+
 // --- config-tabs ---
 // One Config tab renders at a time, so paged or expensive data (audit feeds,
 // storage report, identities) loads only when its tab is shown.
@@ -2928,7 +3012,7 @@ function renderConfigSettings() {
 
 // config-tab:logs
 function renderConfigLogs() {
-  // Shell: the Logs tab is static until its feature lands here.
+  syncLog("service");
 }
 // /config-tab:logs
 

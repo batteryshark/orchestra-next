@@ -225,6 +225,69 @@ class ConsoleApiTests(StateCase):
         self.assertEqual(problem.exception.status, 400)
         self.assertIn("actor", str(problem.exception))
 
+    def test_service_log_tail_after_and_bounds(self):
+        from orchestra import paths
+        path = paths.logs_dir() / "daemon.log"
+        missing = self.call("GET", "/api/service-log").data["data"]
+        self.assertEqual((missing["size"], missing["text"], missing["path"]), (0, "", str(path)))
+        self.assertIn("orchestra-next service install", missing["note"])
+        path.write_bytes(b"a" * 50 + b"b" * 50)
+        tail = self.call("GET", "/api/service-log", query={"bytes": "30"}).data["data"]
+        self.assertEqual((tail["offset"], tail["size"], tail["text"], tail["truncated"]), (70, 100, "b" * 30, True))
+        self.assertNotIn("note", tail)
+        whole = self.call("GET", "/api/service-log").data["data"]
+        self.assertEqual((whole["offset"], whole["truncated"], len(whole["text"])), (0, False, 100))
+        with path.open("ab") as handle:
+            handle.write(b"c" * 10)
+        appended = self.call("GET", "/api/service-log", query={"after": "100"}).data["data"]
+        self.assertEqual((appended["offset"], appended["size"], appended["text"], appended["truncated"]), (100, 110, "c" * 10, False))
+        nothing = self.call("GET", "/api/service-log", query={"after": "110"}).data["data"]
+        self.assertEqual((nothing["offset"], nothing["text"]), (110, ""))
+        shrunk = self.call("GET", "/api/service-log", query={"after": "999"}).data["data"]
+        self.assertEqual((shrunk["offset"], shrunk["size"]), (0, 110))
+        path.write_bytes(b"x" * (300 * 1024))
+        capped = self.call("GET", "/api/service-log", query={"bytes": "99999999"}).data["data"]
+        self.assertEqual((len(capped["text"]), capped["offset"]), (api.LOG_MAX_BYTES, 300 * 1024 - api.LOG_MAX_BYTES))
+        skipped = self.call("GET", "/api/service-log", query={"after": "0", "bytes": "1024"}).data["data"]
+        self.assertEqual((skipped["offset"], skipped["truncated"]), (300 * 1024 - 1024, True))
+        with self.assertRaises(api.Problem) as problem:
+            self.call("GET", "/api/service-log", query={"bytes": "many"})
+        self.assertEqual(problem.exception.status, 400)
+        raw = self.call("GET", "/api/service-log/raw")
+        self.assertIsInstance(raw, api.FileResponse)
+        self.assertEqual((raw.path, raw.media_type), (path, "text/plain; charset=utf-8"))
+        self.assertIn('filename="daemon.log"', raw.headers["Content-Disposition"])
+        path.unlink()
+        with self.assertRaises(api.Problem) as problem:
+            self.call("GET", "/api/service-log/raw")
+        self.assertEqual(problem.exception.status, 404)
+
+    def test_log_routes_require_the_right_authority(self):
+        from orchestra import paths
+        reader = auth.Identity("service", "reader", frozenset({"read"}))
+        for route in ("/api/service-log", "/api/service-log/raw"):
+            with self.assertRaises(api.Problem) as problem:
+                self.call("GET", route, identity=reader)
+            self.assertEqual(problem.exception.status, 403, route)
+        self.assertEqual(self.call("GET", "/api/service-log", identity=auth.network_identity("100.64.0.9")).status, 200)
+        self.create_profile()
+        run = self.submit("log-a")
+        other = self.submit("log-b")
+        (paths.run_dir(run["id"]) / "acp.jsonl").write_text('{"n":1}\n', encoding="utf-8")
+        own = auth.Identity("run", str(run["id"]), auth.RUN_AUTHORITIES, run["id"])
+        value = self.api.handle("GET", f"/api/runs/{run['id']}/log", {}, None, own).data["data"]
+        self.assertEqual((value["text"], value["size"]), ('{"n":1}\n', 8))
+        self.assertEqual(self.call("GET", f"/api/runs/{run['id']}/log", identity=reader).data["data"]["size"], 8)
+        empty = self.call("GET", f"/api/runs/{other['id']}/log").data["data"]
+        self.assertEqual(empty["size"], 0)
+        self.assertIn("ACP log", empty["note"])
+        with self.assertRaises(api.Problem) as problem:
+            self.api.handle("GET", f"/api/runs/{other['id']}/log", {}, None, own)
+        self.assertEqual(problem.exception.status, 403)
+        with self.assertRaises(api.Problem) as problem:
+            self.call("GET", f"/api/runs/{run['id']}/log", identity=auth.Identity("service", "s", frozenset({"stop"})))
+        self.assertEqual(problem.exception.status, 403)
+
     def test_readiness_reports_dsh_and_claude_state(self):
         value = self.call("GET", "/api/readiness").data["data"]
         self.assertEqual(value["schema"], db.SCHEMA_VERSION)

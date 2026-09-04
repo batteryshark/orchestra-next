@@ -90,6 +90,19 @@ class DocumentConformanceTests(unittest.TestCase):
         self.assertEqual(value["bad"]["section"], "audit")
         self.assertEqual(value["tabs"], tabs)
 
+    def test_logs_tab_and_run_log_section_are_wired(self):
+        self.assertNotIn("Coming soon</p>\n  </section>\n  <!-- /config-tab:logs -->", self.html)
+        for name in ("service", "run"):
+            for part in (f'<pre id="{name}-log" class="log-tail"', f'id="{name}-log-follow"', f'id="{name}-log-bytes"',
+                         f'data-action="log-refresh" data-log="{name}"', f'id="{name}-log-note"'):
+                self.assertIn(part, self.html, part)
+        self.assertIn('href="/api/service-log/raw" download="daemon.log"', self.html)
+        self.assertIn('<section id="sec-log" data-sec="log" role="tabpanel" hidden>', self.html)
+        self.assertIn('"log"];', self.js.split("const SECTIONS = ")[1].split("\n")[0])
+        self.assertIn('if (section === "log") renderRunLog();', self.js)
+        self.assertIn('syncLog("service");', self.js.split("// config-tab:logs")[1].split("// /config-tab:logs")[0])
+        self.assertIn("// --- logs ---", self.js)
+
     def test_dark_scheme_and_reduced_motion_are_declared(self):
         self.assertIn("prefers-color-scheme: dark", self.css)
         self.assertIn("prefers-reduced-motion: reduce", self.css)

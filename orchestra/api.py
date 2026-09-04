@@ -12,6 +12,9 @@ from orchestra.contracts import ContractError, RunRequest
 PREFIX = "/api"
 PROFILE_FIELDS = frozenset(("name", "provider", "model", "effort", "tier", "max_concurrency", "enabled", "archived", "note"))
 CATALOG_REFRESH_FLOOR = 10.0  # seconds; a refresh sooner than this serves the cache (each probe spawns DSH)
+LOG_DEFAULT_BYTES = 64 * 1024
+LOG_MAX_BYTES = 256 * 1024
+SERVICE_LOG_NOTE = "daemon is not running under the service; install with `orchestra-next service install`"
 
 
 @dataclass
@@ -150,6 +153,32 @@ def _record_delegation(con, run, data: dict, *, actor: str) -> dict:
     return {**payload, "event_id": event_id}
 
 
+def _log_tail(path: Path, query: dict, note: str) -> dict:
+    """Tail of a log file: the last `bytes` (default 64 KiB, max 256 KiB), or only the bytes past `after`.
+
+    `offset` is where `text` starts; `size` is the file size, so a poller passes `after=<size>` next time.
+    `truncated` means bytes between the caller's start (0, or `after`) and `offset` were skipped."""
+    try:
+        limit = max(1, min(int(query.get("bytes") or LOG_DEFAULT_BYTES), LOG_MAX_BYTES))
+        after = int(query["after"]) if query.get("after") not in (None, "") else None
+    except ValueError as exc:
+        raise Problem(400, "bytes and after must be integers") from exc
+    try:
+        size = path.stat().st_size
+    except FileNotFoundError:
+        return {"path": str(path), "size": 0, "offset": 0, "text": "", "truncated": False, "note": note}
+    start = 0 if after is None or after > size else after  # a shrunken file starts over
+    offset = max(start, size - limit)
+    with path.open("rb") as handle:
+        handle.seek(offset)
+        text = handle.read(size - offset).decode("utf-8", "replace")
+    return {"path": str(path), "size": size, "offset": offset, "text": text, "truncated": offset > start}
+
+
+def _service_log_path() -> Path:
+    return paths.logs_dir() / "daemon.log"
+
+
 class API:
     def __init__(self, con):
         self.con = con
@@ -231,6 +260,9 @@ class API:
                 _need(identity, "read", target=run_id)
                 after = int(query.get("after", 0) or 0)
                 return Response(200, envelope(self.con, [dict(row) for row in self.con.execute("SELECT * FROM usage_events WHERE run_id=? AND id>? ORDER BY id LIMIT 500", (run_id, after))]))
+            if suffix == ["log"] and method == "GET":
+                _need(identity, "read", target=run_id)
+                return Response(200, envelope(self.con, _log_tail(paths.run_dir(run_id) / "acp.jsonl", query, "the run has not written an ACP log yet")))
             if suffix == ["dependencies"] and method == "GET":
                 _need(identity, "read", target=run_id)
                 return Response(200, envelope(self.con, [dict(row) for row in self.con.execute("SELECT * FROM run_dependencies WHERE run_id=?", (run_id,))]))
@@ -469,6 +501,15 @@ class API:
             fallback = "".join(c if 32 < ord(c) < 127 and c != '"' else "_" for c in metadata["name"]) or "artifact"
             disposition = f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{urllib.parse.quote(metadata['name'])}"
             return FileResponse(200, file_path, metadata["media_type"], headers={"Content-Disposition": disposition})
+        if parts == ["service-log"] and method == "GET":
+            _operator(identity)
+            return Response(200, envelope(self.con, _log_tail(_service_log_path(), query, SERVICE_LOG_NOTE)))
+        if parts == ["service-log", "raw"] and method == "GET":
+            _operator(identity)
+            path = _service_log_path()
+            if not path.is_file():
+                raise Problem(404, SERVICE_LOG_NOTE)
+            return FileResponse(200, path, "text/plain; charset=utf-8", headers={"Content-Disposition": 'attachment; filename="daemon.log"'})
         if parts == ["models"] and method == "GET":
             _need(identity, "read")
             age = dsh.catalog_cache_age()

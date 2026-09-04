@@ -15,6 +15,7 @@ GET|POST  /api/runs/{id}/children
 GET|POST  /api/runs/{id}/artifacts
 GET|POST  /api/runs/{id}/delegations
 GET       /api/runs/{id}/changes
+GET       /api/runs/{id}/log
 POST      /api/runs/{id}/merge
 
 POST      /api/runs/{id}/tell
@@ -41,11 +42,17 @@ GET       /api/storage
 POST      /api/storage/plans
 GET       /api/storage/plans/{id}
 POST      /api/storage/plans/{id}/apply
+GET       /api/service-log
+GET       /api/service-log/raw
 ```
 
 List/feed endpoints accept an `after` cursor where applicable; `/api/runs`, `/api/events`, and `/api/runs/{id}/events` also take `order=asc|desc`, `limit` (runs 1..200, events 1..500), and a `before` cursor (`id < before`) for paging backwards. The usage feed contains raw token facts only.
 
 `pause` parks the run at the next safe boundary: the current step is cancelled, the worktree is checkpointed, the DSH process stops, and capacity is released. The run reports `status: waiting` with a null `waiting_kind`, a `waiting_detail` beginning with `paused`, and `paused: true` in its payload. `resume` continues the same session.
+
+## Log tails
+
+`GET /api/service-log` (operator device or trusted network peer) returns the tail of the launchd service log, `<state>/logs/daemon.log`, which holds both daemon streams. `GET /api/runs/{id}/log` (run read authority) returns the tail of the run's raw ACP log, `<state>/runs/{id}/acp.jsonl`. Both take `bytes` (default 65536, max 262144) and answer `{path, size, offset, text, truncated}`: `text` starts at byte `offset` and ends at `size`; `truncated` means bytes before `offset` were skipped. Pass `after=<size from the last reply>` to receive only the bytes appended since then (a cheap 3 s poll); an `after` past the current size means the file shrank, and the reply starts over from its tail. A missing file answers `size: 0` with a `note` (for the service log: `daemon is not running under the service; install with \`orchestra-next service install\``). `GET /api/service-log/raw` streams the whole file as `text/plain` with `Content-Disposition: attachment; filename="daemon.log"` for download; it is `404` when the file does not exist.
 
 ## Run request
 

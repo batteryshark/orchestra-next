@@ -409,6 +409,12 @@
   .audit-feed pre { background: var(--soft); border-radius: var(--radius-s); padding: var(--sp-2) var(--sp-3); font-size: var(--fs-xs); }
   /* end slice3-admin */
 
+  /* logs */
+  .log-tools { display: flex; gap: var(--sp-4); align-items: center; flex-wrap: wrap; font-size: var(--fs-s); color: var(--muted); margin-bottom: var(--sp-2); }
+  .log-tools select { width: auto; margin: 0; }
+  .log-tail { background: var(--soft); border-radius: var(--radius-s); padding: var(--sp-3); font-size: var(--fs-xs); max-height: 70vh; overflow: auto; min-height: 6em; }
+  /* end logs */
+
   @media (max-width: 719px) {
     main { padding: var(--sp-3); }
     .grid2 { grid-template-columns: 1fr; }
