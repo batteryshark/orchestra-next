@@ -3043,6 +3043,7 @@ function renderConfigSettings() {
     form._revision = data.revision;
     for (const key of SETTINGS_FIELDS) form.elements[key].value = data.settings[key];
   }
+  renderUpdate(); // self-update
 }
 
 async function schedulerVerb(verb, button) {
@@ -3092,6 +3093,7 @@ Object.assign(FORMS, {
   }),
 });
 // /settings
+
 // /config-tab:settings
 
 // config-tab:logs
@@ -3489,6 +3491,69 @@ Object.assign(ACTIONS, {
   }
 }
 // --- end new-run-form ---
+
+// --- self-update ---
+// Config › Settings › Version: the running commit, "Check for updates" against
+// origin/main, and "Update and restart" (fast-forward; the daemon restarts itself).
+store.update = null;      // GET /api/update or the last check/apply result
+store.updateBusy = false;
+
+async function loadUpdate() {
+  if (store.update !== null || store.auth !== "ok") return;
+  try { store.update = await api.get("/api/update"); } catch (error) { store.update = { available: false, reason: error.message }; }
+  markDirty("config");
+}
+
+function renderUpdate() {
+  const box = document.getElementById("update-state");
+  const list = document.getElementById("update-commits");
+  const u = store.update;
+  if (!u) { loadUpdate(); box.replaceChildren(el("p", { class: "view-state", text: "Reading version…" })); return; }
+  if (!u.available) { box.replaceChildren(el("p", { class: "muted", text: `Version unavailable: ${u.reason}` })); list.hidden = true; return; }
+  const nodes = [
+    el("span", { class: "chip", title: u.sha, text: `${u.branch} @ ${u.short}` }),
+    el("span", { class: "muted", title: u.date, text: `${u.subject} · ${fmt.rel(u.date)}` }),
+  ];
+  if (u.dirty) nodes.push(el("span", { class: "chip warn", text: "local changes" }));
+  if (u.behind === undefined) {
+    nodes.push(el("button", { class: "btn", dataset: { action: "update-check" }, text: "Check for updates" }));
+  } else if (u.behind === 0) {
+    nodes.push(el("span", { class: "chip good", text: "up to date" }), el("button", { class: "btn", dataset: { action: "update-check" }, text: "Check again" }));
+  } else {
+    nodes.push(el("span", { class: "chip warn", text: `${u.behind} commit${u.behind === 1 ? "" : "s"} behind` }));
+    if (u.can_update) nodes.push(el("button", { class: "btn btn-primary", dataset: { action: "update-apply" }, text: "Update and restart" }));
+    else nodes.push(el("span", { class: "muted", text: u.dirty ? "commit or stash local changes first" : `${u.ahead} local commit${u.ahead === 1 ? "" : "s"} not on ${u.target}` }));
+    nodes.push(el("button", { class: "btn", dataset: { action: "update-check" }, text: "Check again" }));
+  }
+  if (u.ahead) nodes.push(el("span", { class: "chip", text: `${u.ahead} ahead` }));
+  if (u.restart) nodes.push(el("span", { class: "chip good", text: u.restart === "service" ? "restarting service…" : "daemon exited; start it again" }));
+  box.replaceChildren(...nodes);
+  list.hidden = !(u.commits && u.commits.length);
+  if (!list.hidden) list.replaceChildren(...u.commits.map((c) => el("li", null, el("code", { text: c.short }), " ", c.subject, el("span", { class: "muted", text: ` · ${fmt.rel(c.date)}` }))));
+}
+
+Object.assign(ACTIONS, {
+  "update-check": (button) => act("update-check", button, async () => {
+    try { store.update = await api.post("/api/update/check", {}); }
+    catch (error) { toast(error.message); }
+    markDirty("config");
+  }),
+  "update-apply": async (button) => {
+    const u = store.update;
+    const ok = await confirmDialog({
+      title: `Update to ${u.remote_commit.short}?`,
+      body: `Fast-forwards ${u.behind} commit${u.behind === 1 ? "" : "s"} and restarts the daemon. Running runs keep their supervisors; the console reconnects when the daemon is back. Breaking changes are accepted.`,
+      confirmLabel: "Update and restart", danger: true,
+    });
+    if (ok === false) return;
+    await act("update-apply", button, async () => {
+      try { store.update = await api.post("/api/update/apply", {}); toast(store.update.updated ? "Updated; daemon restarting" : "Already up to date"); }
+      catch (error) { toast(error.message); }
+      markDirty("config");
+    });
+  },
+});
+// --- end self-update ---
 
 // --- router ---
 function parseHash() {

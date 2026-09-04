@@ -199,6 +199,20 @@ def cmd_scheduler(args):
     _print(_client(args).post(f"{API}/scheduler/{verb}", {"note": args.note}))
 
 
+def cmd_update(args):
+    from orchestra import update
+    try:
+        if args.check:
+            _print(update.check()); return 0
+        result = update.apply()
+        _print(result)
+        if result["updated"]:
+            print("restart the daemon to load the new code (orchestra-next service restart)", file=sys.stderr)
+        return 0
+    except update.UpdateError as exc:
+        raise SystemExit(f"orchestra-next: {exc}")
+
+
 def cmd_backup(args):
     _print(backup.backup(args.dest))
 
@@ -259,6 +273,7 @@ def build_parser():
     settings_parser.set_defaults(func=cmd_settings, action="list")
     for name in ("pause", "resume-scheduler"):
         item = sub.add_parser(name, help="pause or resume fleet admission; running runs continue"); item.add_argument("note", nargs="?"); item.set_defaults(func=cmd_scheduler)
+    upd = sub.add_parser("update", help="fast-forward this checkout to origin/main"); upd.add_argument("--check", action="store_true"); upd.set_defaults(func=cmd_update)
     bak = sub.add_parser("backup"); bak.add_argument("dest", nargs="?"); bak.set_defaults(func=cmd_backup)
     res = sub.add_parser("restore"); res.add_argument("backup"); res.add_argument("--apply", action="store_true"); res.set_defaults(func=cmd_restore)
     return parser

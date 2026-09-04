@@ -43,6 +43,7 @@ Every model you can reach through DSH becomes a route: DeepSeek, Claude, GPT via
 - **Evidence.** Every DSH event, tool call, token count, checkpoint, diff, artifact, and control message is kept and browsable. Raw token facts only: no prices, no quota guesses.
 - **Operator console.** Fleet, run detail with six sections, attention and messages, and a tabbed Config view (profiles, groups, identities and pairing, storage and prune, audit, settings, service logs, diagnostics). Keyboard driven.
 - **Scheduler.** Global and per-profile concurrency, dependency conditions, child-run caps, and a pause switch. Limits are editable at runtime.
+- **Self-update.** Config › Settings shows the running commit, checks `origin/main`, and fast-forwards plus restarts the daemon from the browser. Breaking changes are accepted.
 - **Small footprint.** No Python dependencies. The console is `index.html`, `app.js`, and `app.css`. The daemon runs as a launchd service on macOS.
 
 ## Requirements
@@ -127,6 +128,7 @@ orchestra-next resume-scheduler
 orchestra-next backup [dest]                 # consistent DB copy + bootstrap + artifacts + sha256 manifest
 orchestra-next restore <backup> --apply      # verifies digests, moves current state to trash, never deletes
 orchestra-next storage                       # size report; prune plans are dry-run then apply
+orchestra-next update --check                # commits behind origin/main; `update` fast-forwards
 ```
 
 Service logs: `~/.orchestra-next/logs/daemon.log`, also tailed in Config › Logs. Each run's raw ACP stream is under its run section Log.

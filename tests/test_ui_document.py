@@ -77,6 +77,12 @@ class DocumentConformanceTests(unittest.TestCase):
         self.assertIn('"orchestra-next.ui"', self.js)
         self.assertNotRegex(self.js, r'"orchestra\.[a-z]', "V2 key name")
 
+    def test_self_update_block_is_wired(self):
+        for marker in ("<!-- self-update -->", 'id="update-state"', 'id="update-commits"'):
+            self.assertIn(marker, self.html, marker)
+        for marker in ("// --- self-update ---", '"update-check"', '"update-apply"', 'api.post("/api/update/check"', 'api.post("/api/update/apply"', "renderUpdate(); // self-update"):
+            self.assertIn(marker, self.js, marker)
+
     def test_settings_tab_and_scheduler_chip_are_wired(self):
         self.assertIn('<form data-form="settings"', self.html)
         for key in ("max_active_runs", "max_children_per_run", "max_child_depth"):

@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import urllib.parse
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from orchestra import antigravity, artifacts, attention, auth, child_runs, claude, db, dsh, groups, messaging, paths, profiles, runs, settings, storage, worktree
+from orchestra import antigravity, artifacts, attention, auth, child_runs, claude, db, dsh, groups, messaging, paths, profiles, runs, settings, storage, update, worktree
 from orchestra.contracts import ContractError, RunRequest
 
 PREFIX = "/api"
@@ -509,6 +510,24 @@ class API:
                 except RuntimeError as exc:
                     raise Problem(409, str(exc)) from exc
                 return Response(200, envelope(self.con, settings.payload(self.con)))
+        if parts == ["update"] and method == "GET":
+            _operator(identity)
+            return Response(200, envelope(self.con, update.status()))
+        if len(parts) == 2 and parts[0] == "update" and parts[1] in ("check", "apply") and method == "POST":
+            _operator(identity)
+            try:
+                if parts[1] == "check":
+                    return Response(200, envelope(self.con, update.check()))
+                result = update.apply()
+            except update.UpdateError as exc:
+                raise Problem(409, str(exc)) from exc
+            except subprocess.TimeoutExpired as exc:
+                raise Problem(504, "git did not answer in time") from exc
+            db.record_control(self.con, actor=_actor(identity), action="update.apply", outcome="ok" if result["updated"] else "noop",
+                              target_type="daemon", target_id=result["short"], detail={"previous": result.get("previous"), "behind": result["behind"]})
+            if result["updated"]:
+                result["restart"] = update.schedule_restart()
+            return Response(200, envelope(self.con, result))
         if len(parts) == 2 and parts[0] == "scheduler" and parts[1] in ("pause", "resume") and method == "POST":
             _operator(identity)
             note = _body(body).get("note")
@@ -735,4 +754,4 @@ def _usage_summary(con, query: dict) -> dict:
 
 
 def openapi() -> dict:
-    return {"openapi": "3.1.0", "info": {"title": "Orchestra-next API", "version": "1"}, "servers": [{"url": "http://127.0.0.1:8766/api"}], "paths": {"/runs": {}, "/messages": {}, "/profiles": {}, "/groups": {}, "/settings": {}, "/scheduler/pause": {}, "/scheduler/resume": {}, "/attention": {}, "/storage": {}}}
+    return {"openapi": "3.1.0", "info": {"title": "Orchestra-next API", "version": "1"}, "servers": [{"url": "http://127.0.0.1:8766/api"}], "paths": {"/runs": {}, "/messages": {}, "/profiles": {}, "/groups": {}, "/settings": {}, "/update": {}, "/scheduler/pause": {}, "/scheduler/resume": {}, "/attention": {}, "/storage": {}}}

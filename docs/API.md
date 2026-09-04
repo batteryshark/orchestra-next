@@ -34,6 +34,9 @@ GET|POST  /api/groups
 PATCH     /api/groups/{id-or-slug}
 GET       /api/messages
 GET|PATCH /api/settings
+GET       /api/update
+POST      /api/update/check
+POST      /api/update/apply
 POST      /api/scheduler/pause
 POST      /api/scheduler/resume
 
@@ -73,6 +76,10 @@ List/feed endpoints accept an `after` cursor where applicable; `/api/runs`, `/ap
 `POST /api/scheduler/pause` and `POST /api/scheduler/resume` (operator only) flip `paused` with an optional `{note}` and answer the same payload as `GET /api/settings`. While paused the scheduler admits no queued run; running runs continue. Control events: `scheduler.pause`, `scheduler.resume`.
 
 CLI: `orchestra-next settings [list | set <key> <value>]`, `orchestra-next pause [note]`, `orchestra-next resume-scheduler [note]` (`resume` addresses a single run).
+
+## Self-update
+
+`GET /api/update` (operator only) reports the running checkout: `sha`, `short`, `branch`, `date`, `subject`, `dirty`, `remote`, `root`; or `available: false` with a `reason` outside a Git checkout. `POST /api/update/check` fetches `origin/main` and adds `behind`, `ahead`, `commits` (newest first), `remote_commit`, and `can_update` (behind, not ahead, not dirty). `POST /api/update/apply` fast-forwards to `origin/main`, records `update.apply` in the control feed, and schedules a daemon restart one second later: under the launchd service it runs `launchctl kickstart -k`; a foreground daemon exits with code 75 so a supervisor or the operator restarts it. A dirty checkout or diverged history answers `409`; nothing is stashed, reset, or deleted. Breaking changes between versions are accepted by design. CLI: `orchestra-next update [--check]`.
 
 ## Log tails
 
