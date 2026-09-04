@@ -122,6 +122,41 @@ def write_auth_file(run_id: int, token: str) -> Path:
     return target
 
 
+# OpenCode's auth store is the one place these keys already live on this machine.
+# name in auth.json -> env var the DSH profile patch reads via apiKeyEnv.
+PROVIDER_KEYS = {"meta": "META_API_KEY", "zai": "ZAI_API_KEY"}
+
+
+def provider_keys(auth_path: Path | None = None, codex_path: Path | None = None) -> dict[str, str]:
+    """Env vars for the API-key providers declared in cordis.patch.yml. Missing store or entries = no vars."""
+    path = auth_path or Path(os.environ.get("ORCHESTRA_NEXT_OPENCODE_AUTH", "~/.local/share/opencode/auth.json")).expanduser()
+    try:
+        store = json.loads(path.read_text())
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return {}
+    keys = {}
+    for name, var in PROVIDER_KEYS.items():
+        key = (store.get(name) or {}).get("key") if isinstance(store, dict) else None
+        if isinstance(key, str) and key:
+            keys[var] = key
+    keys.update(codex_key(codex_path))
+    return keys
+
+
+def codex_key(auth_path: Path | None = None) -> dict[str, str]:
+    """The Codex CLI's OAuth access token; pi-ai's openai-codex route takes it as its api key.
+
+    The Codex CLI (and tarmac's codex poller) refresh this file; a token unused
+    for days goes stale and the route answers 401 until `codex` runs once.
+    """
+    path = auth_path or Path(os.environ.get("ORCHESTRA_NEXT_CODEX_AUTH", "~/.codex/auth.json")).expanduser()
+    try:
+        token = json.loads(path.read_text()).get("tokens", {}).get("access_token")
+    except (OSError, UnicodeError, json.JSONDecodeError, AttributeError):
+        return {}
+    return {"OPENAI_CODEX_API_KEY": token} if isinstance(token, str) and token else {}
+
+
 WORKER_ENV_ALWAYS = ("ORCHESTRA_NEXT_*", "DSH_*", "PATH", "HOME", "TMPDIR", "LANG", "LC_*", "TZ", "TERM")
 
 
@@ -151,6 +186,7 @@ def launch(run: dict, token: str, provider_env: dict[str, str] | None = None) ->
     run_id = int(run["id"])
     auth_file = write_auth_file(run_id, token)
     env = worker_env()
+    env.update(provider_keys())
     env.update({
         "ORCHESTRA_NEXT_DSH_SESSION_ROOT": str(paths.run_session_dir(run_id)),
         "ORCHESTRA_NEXT_RUN_AUTH_FILE": str(auth_file),
@@ -180,6 +216,7 @@ def catalog(cwd: str) -> dict[tuple[str, str], set[str]]:
     check_profile(require_binary=False)
     with tempfile.TemporaryDirectory(prefix="orchestra-next-dsh-check-") as root:
         env = dict(os.environ)
+        env.update(provider_keys())
         env.update({
             "ORCHESTRA_NEXT_DSH_SESSION_ROOT": root,
             "ORCHESTRA_NEXT_CLAUDE_PROXY_URL": "http://127.0.0.1:1/v1",

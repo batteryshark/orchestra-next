@@ -1,6 +1,7 @@
 """Durable routes validated against DSH's ACP catalog."""
 from __future__ import annotations
 
+import json
 import sqlite3
 import uuid
 
@@ -83,3 +84,55 @@ def payload(row) -> dict:
     value["enabled"] = bool(value["enabled"])
     value["archived"] = bool(value["archived"])
     return {"id": row["profile_id"], **value}
+
+
+# V2 (~/.orchestra/v2/orchestra.db) stored runtime-specific model names; DSH routes are provider/model.
+V2_ROUTES = {
+    ("claude", "claude-opus-5"): ("claude-subscription", "opus"),
+    ("claude", "claude-sonnet-5"): ("claude-subscription", "sonnet"),
+    ("claude", "claude-haiku-4-5"): ("claude-subscription", "haiku"),
+    ("claude", "claude-fable-5"): ("claude-subscription", "fable"),
+    ("codex", "gpt-5.6-sol"): ("openai-codex", "gpt-5.6-sol"),
+    ("codex", "gpt-5.6-luna"): ("openai-codex", "gpt-5.6-luna"),
+    ("reasonix", "deepseek/deepseek-v4-flash"): ("deepseek-official", "deepseek-v4-flash"),
+    ("reasonix", "deepseek/deepseek-v4-pro"): ("deepseek-official", "deepseek-v4-pro"),
+    ("opencode", "zai/glm-5.3"): ("zai", "glm-5.3"),
+    ("opencode", "zai/glm-5.3-flash"): ("zai", "glm-5.3-flash"),
+    ("pi", "zai/glm-5.3"): ("zai", "glm-5.3"),
+    ("pi", "zai/glm-5.3-flash"): ("zai", "glm-5.3-flash"),
+}
+# DSH efforts differ per provider; a V2 effort DSH does not advertise falls to the nearest one it does.
+EFFORT_FALLBACK = {"medium": ("high", "low"), "max": ("high",), "high": ("medium",), "low": ("medium",)}
+
+
+def import_v2(con, v2_path, *, catalog, apply=False, actor="operator") -> list[dict]:
+    """Plan (and with apply=True, create) profiles from a V2 database. One row per V2 profile."""
+    v2 = sqlite3.connect(f"file:{v2_path}?mode=ro", uri=True)
+    v2.row_factory = sqlite3.Row
+    rows = v2.execute("SELECT p.*, r.slug AS runtime FROM profiles p JOIN runtimes r USING(runtime_id) "
+                      "WHERE p.archived=0 ORDER BY p.tier DESC, p.priority DESC").fetchall()
+    report = []
+    for row in rows:
+        entry = {"slug": row["slug"], "v2": f'{row["runtime"]}/{row["model"]}', "effort": row["effort"]}
+        route = V2_ROUTES.get((row["runtime"], row["model"]))
+        config = json.loads(row["config_json"] or "{}")
+        if not row["enabled"]:
+            entry.update(outcome="skipped", reason="disabled in V2")
+        elif route is None or route not in catalog:
+            entry.update(outcome="skipped", reason="no DSH route")
+        elif find(con, row["slug"]) is not None:
+            entry.update(outcome="exists", route="/".join(route))
+        else:
+            effort = row["effort"] or config.get("variant")  # OpenCode GLM variants were efforts by another name
+            if effort and effort not in catalog[route]:
+                effort = next((e for e in EFFORT_FALLBACK.get(effort, ()) if e in catalog[route]), None)
+            note = "; ".join(part for part in (
+                config.get("role"), "spawn: " + ", ".join(config["spawn_profiles"]) if config.get("spawn_profiles") else None,
+                f"imported from V2 {row['runtime']}/{row['model']} {row['effort'] or ''}".rstrip()) if part)
+            entry.update(outcome="create" if not apply else "created", route="/".join(route), effort=effort, tier=row["tier"])
+            if apply:
+                create(con, name=row["name"], slug=row["slug"], provider=route[0], model=route[1], effort=effort,
+                       tier=row["tier"], max_concurrency=row["max_concurrency"], note=note, catalog=catalog, actor=actor)
+        report.append(entry)
+    v2.close()
+    return report

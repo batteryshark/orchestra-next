@@ -38,10 +38,22 @@ const server = Bun.serve({
     const headers = new Headers(request.headers);
     headers.delete("authorization");
     headers.delete("x-api-key");
+    let body: BodyInit | undefined = request.method === "GET" || request.method === "HEAD" ? undefined : request.body;
+    if (request.method === "POST" && incoming.pathname.endsWith("/chat/completions")) {
+      // DSH sends OpenAI reasoning_effort; the bridge only reads its own base64url selection header.
+      const text = await request.text();
+      body = text;
+      try {
+        const parsed = JSON.parse(text);
+        if (typeof parsed.reasoning_effort === "string" && typeof parsed.model === "string") {
+          headers.set("x-opencode-claude-effort", Buffer.from(JSON.stringify({ modelId: parsed.model, effort: parsed.reasoning_effort })).toString("base64url"));
+        }
+      } catch {}
+    }
     return fetch(target, {
       method: request.method,
       headers,
-      body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
+      body,
       redirect: "manual",
     });
   },

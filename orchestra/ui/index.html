@@ -186,6 +186,10 @@
     <h2 id="delegate-title">Delegate a review</h2>
     <p class="muted">Sends the run's worktree to Google's Antigravity for a read-only review; the findings return as a 🛰 row. This call blocks for up to ten minutes.</p>
     <label>Model <select name="model" required></select></label>
+    <p class="muted">Presets:
+      <button type="button" class="btn" data-action="delegate-preset" data-model="claude-opus-4-6-thinking">Opus 4.6 thinking</button>
+      <button type="button" class="btn" data-action="delegate-preset" data-model="gemini-3.8-flash-high">Gemini 3.8 Flash high</button>
+    </p>
     <label>Objective <textarea name="objective" rows="3" required placeholder="What should the reviewer look for?"></textarea></label>
     <p class="form-error" hidden></p>
     <div class="dialog-buttons">

@@ -2123,6 +2123,12 @@ Object.assign(ACTIONS, {
     });
   },
   "delegate-cancel": () => document.getElementById("delegate").close(),
+  "delegate-preset": (button) => {
+    const select = button.form.elements.model;
+    const id = button.dataset.model;
+    if (![...select.options].some((option) => option.value === id)) select.append(el("option", { value: id, text: id }));
+    select.value = id;
+  },
   "run-reroute": (button) => {
     const run = store.detail.run;
     if (!run || !ACTIVE_STATUSES.has(run.status)) return;

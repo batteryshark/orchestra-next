@@ -111,6 +111,16 @@ def cmd_retry(args):
     _print(_client(args).post(f"{API}/runs/{args.run_id}/{endpoint}", {"request_id": args.request_id or str(uuid.uuid4()), "direction": getattr(args, "direction", None)}))
 
 
+def cmd_profiles_import_v2(args):
+    from orchestra import db, profiles
+    catalog, _ = dsh.cached_catalog(os.getcwd())
+    con = db.connect()
+    try:
+        _print(profiles.import_v2(con, args.v2_db, catalog=catalog, apply=args.apply))
+    finally:
+        con.close()
+
+
 def cmd_profile_create(args):
     _print(_client(args).post(API + "/profiles", {"name": args.name, "slug": args.slug, "provider": args.provider, "model": args.model, "effort": args.effort, "tier": args.tier, "max_concurrency": args.max_concurrency, "note": args.note}))
 
@@ -197,6 +207,7 @@ def build_parser():
         if name == "continue": item.add_argument("direction")
         item.set_defaults(func=cmd_retry)
     profiles_parser = sub.add_parser("profiles"); profiles_parser.set_defaults(func=cmd_list)
+    imp = sub.add_parser("profiles-import-v2"); imp.add_argument("--v2-db", default=os.path.expanduser("~/.orchestra/v2/orchestra.db")); imp.add_argument("--apply", action="store_true"); imp.set_defaults(func=cmd_profiles_import_v2)
     profile = sub.add_parser("profile-create"); profile.add_argument("name"); profile.add_argument("provider"); profile.add_argument("model"); profile.add_argument("--slug"); profile.add_argument("--effort"); profile.add_argument("--tier", type=int, default=1); profile.add_argument("--max-concurrency", type=int); profile.add_argument("--note"); profile.set_defaults(func=cmd_profile_create)
     groups_parser = sub.add_parser("groups"); groups_parser.set_defaults(func=cmd_list)
     group = sub.add_parser("group-create"); group.add_argument("name"); group.add_argument("--slug"); group.add_argument("--cwd"); group.set_defaults(func=cmd_group_create)
