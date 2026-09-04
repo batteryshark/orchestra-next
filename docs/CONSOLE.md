@@ -22,7 +22,7 @@ Browser pairing:
 
 1. Run `orchestra-next pair` in a terminal. The CLI calls `POST /api/auth/pair` with the operator bearer and prints a 12-character code (`XXXX-XXXX-XXXX`, default TTL 300 s, single use). Case, dashes, and spaces are ignored; `O`→`0`, `I`/`L`→`1`.
 2. The pairing screen posts `POST /api/auth/pair/redeem {code, name, cookie: true}`.
-3. The reply is `201` with the device record only. The bearer travels in `Set-Cookie: orchestra_device=od_…; Path=/; Max-Age=31536000; HttpOnly; SameSite=Strict`. JavaScript never sees the token. The only `localStorage` entry is `orchestra-next.ui` (fleet filters, the machine-events toggle, the last run section); every access is wrapped in `try`, and the console works with storage unavailable.
+3. The reply is `201` with the device record only. The bearer travels in `Set-Cookie: orchestra_device=od_…; Path=/; Max-Age=31536000; HttpOnly; SameSite=Strict`. JavaScript never sees the token. The only `localStorage` entry is `orchestra-next.ui` (fleet filters, the machine-events toggle, the last run section, the last Config tab as `configTab`); every access is wrapped in `try`, and the console works with storage unavailable.
 
 Credential resolution: an `Authorization: Bearer` header wins; otherwise the cookie. CSRF rule for non-GET requests: a cookie-authenticated request must carry `Origin` equal to `http://` + `Host`, exactly. A trusted-network peer that sends an `Origin` must also match; a trusted peer with no `Origin` (curl) passes. Bearer requests skip the check. CLI and services use bearers (`od_` device, `os_` service, `or_` run worker).
 
@@ -50,7 +50,7 @@ Poll loop (`tick`):
 
 Run detail: on first open, `GET /api/runs/{id}/events?order=desc&limit=500`; `absorbHistory()` reverses the page, sets `eventsAfter` to the newest id, and `historyFloor` to the oldest. Later ticks page forward with `after=<eventsAfter>`. "Load earlier history" fetches `order=desc&limit=500&before=<historyFloor>`, prepends, and restores the scroll offset. `historyDone` is true when a page is short. Changes, Usage, and Artifacts load once per section visit and reload after each snapshot refresh; dependencies and children load once per run.
 
-Hash routes (`parseHash`): `#/` Fleet; `#/runs/{id}` Activity; `#/runs/{id}/{section}` with section in `activity | changes | artifacts | usage | evidence` (unknown falls back to Activity); `#/attention`; `#/config`; `#/pair/{code}` (a scanned pairing link: while the browser is unpaired the code is copied into the pairing form, then the route continues to `#/config`). Anything else is Fleet. Opening a different run resets `store.detail`, seeds the header from the fleet row when known, and polls at once.
+Hash routes (`parseHash`): `#/` Fleet; `#/runs/{id}` Activity; `#/runs/{id}/{section}` with section in `activity | changes | artifacts | usage | evidence` (unknown falls back to Activity); `#/attention`; `#/config` (the last-used Config tab); `#/config/{tab}` with tab in `profiles | groups | identities | storage | audit | settings | logs | diagnostics` (unknown falls back to the last-used tab); `#/pair/{code}` (a scanned pairing link: while the browser is unpaired the code is copied into the pairing form, then the route continues to `#/config`). Anything else is Fleet. Opening a different run resets `store.detail`, seeds the header from the fleet row when known, and polls at once.
 
 ## 4. Rendering rules
 
@@ -100,7 +100,7 @@ A waiting run with kind attention, permission, or verification adds an "Answer �
 
 **Attention.** Open items grouped by run, each with kind chip, non-blocking chip, age, expiry countdown (1 s timer, red under 60 s), lease holder, objective, prompt, context key-values, and option buttons that fill the answer box. Alerts acknowledge with "acknowledged" when the box is empty. Answering an item with a live lease opens a danger confirm before overriding.
 
-**Config.** Profiles (table; New/Edit dialog with datalists from `/api/models`, manual entry when the catalog fails; Enable/Disable and Archive via revision-checked PATCH; a `409` keeps the operator's edits and reloads the untouched fields). Groups (table; New dialog; Rename and Set directory through the confirm input; Archive confirm). Devices and service tokens (revoke with confirm; new token shown once in `token-reveal` and cleared on close). Pairing (`POST /api/auth/pair` → code, expiry countdown, and a QR of `${origin}/#/pair/{code}` drawn from the pure `qrMatrix()` in the `qr` block). Storage (`/api/storage` report; "Plan prune" posts a dry-run plan whose exact items and totals render as a table; "Apply this plan" is a danger confirm restating the count and size, then shows what moved and the trash directory). Audit (controls and callbacks feeds loaded lazily with an `after` cursor, a client-side text filter, and "Load more"). Diagnostics: identity, instance, board revision, poll health, and `/api/readiness` (schema, DSH, Claude sidecar, models cached).
+**Config.** Tabbed; one tab renders at a time, so a tab's data loads only when it is shown (`CONFIG_RENDERERS` in the `config-tabs` block maps tab → render function). Profiles (table; New/Edit dialog with datalists from `/api/models`, manual entry when the catalog fails; Enable/Disable and Archive via revision-checked PATCH; a `409` keeps the operator's edits and reloads the untouched fields). Groups (table; New dialog; Rename and Set directory through the confirm input; Archive confirm). Identities: devices and service tokens (revoke with confirm; new token shown once in `token-reveal` and cleared on close) plus Pairing (`POST /api/auth/pair` → code, expiry countdown, and a QR of `${origin}/#/pair/{code}` drawn from the pure `qrMatrix()` in the `qr` block). Storage (`/api/storage` report; "Plan prune" posts a dry-run plan whose exact items and totals render as a table; "Apply this plan" is a danger confirm restating the count and size, then shows what moved and the trash directory). Audit (controls and callbacks feeds loaded lazily with an `after` cursor, a client-side text filter, and "Load more"). Settings and Logs are empty shells ("Coming soon") between the `config-tab:settings` / `config-tab:logs` anchors in `index.html` and `app.js`. Diagnostics: identity, instance, board revision, poll health, and `/api/readiness` (schema, DSH, Claude sidecar, models cached).
 
 **Pairing screen.** Shown whenever auth is `unpaired`. Code and device name; success sets auth `ok`, marks snapshots stale, and polls.
 
@@ -118,6 +118,7 @@ From the `keydown` handler in `--- boot ---`. Keys are ignored while typing, exc
 | `Enter` | Fleet, row focused | open the run |
 | `1`–`5` | Run | Activity, Changes, Artifacts, Usage, Evidence |
 | `[` `]` | Run | previous / next section |
+| `[` `]` | Config | previous / next tab |
 | `t` | Run | open Direct |
 | `End` | Run | follow live |
 
@@ -128,7 +129,7 @@ Run `python3 run_tests.py`. It runs one process per module; pass substrings to s
 | File | Covers |
 | --- | --- |
 | `tests/test_ui.py` | Real HTTP on an ephemeral port: static paths, content types, `no-cache`, 404; security headers; Host validation; cookie pairing (HttpOnly, SameSite, token hidden, replay refused); cookie GET; exact-Origin CSRF; bearer skips CSRF; logout; artifact download with cookie and disposition; trusted-network identity, bare-client mutations, host allowlist extension, bootstrap validation. |
-| `tests/test_ui_document.py` | Static conformance: files present; `node --check` on `app.js`; no HTML injection; no inline script, style, or handlers; sentinel pairing and required names; every `data-action`/`data-form` has a handler; dark scheme, reduced motion, `scrollbar-gutter`, `color-scheme` meta. |
+| `tests/test_ui_document.py` | Static conformance: files present; the eight Config tab panels and anchors, `#/config/{tab}` parsing; `node --check` on `app.js`; no HTML injection; no inline script, style, or handlers; sentinel pairing and required names; every `data-action`/`data-form` has a handler; dark scheme, reduced motion, `scrollbar-gutter`, `color-scheme` meta. |
 | `tests/test_ui_js.py` | Slices `constants`+`fmt`+`logic` and runs them under `node -e`: formatters, `mergeThread`, `parseDiff`, `aggregateUsage`, `filterRuns`, `runSignature`, `extractText`. Exports `slice_section` and `run_node`. |
 | `tests/test_ui_routing.py` | `routing-logic`: `routeEfforts`, `rerouteBody`. |
 | `tests/test_ui_config.py` | `config-logic`: `profileBody`, `profilePatch`, `groupPatch`, `modelEfforts`. |
@@ -139,7 +140,7 @@ Run `python3 run_tests.py`. It runs one process per module; pass substrings to s
 ## 8. How to add a feature
 
 1. Pick the anchor block. The existing blocks (`slice2-routing`, `slice2-evidence`, `slice2-config`, `slice3-admin`) each belong to one feature area; add a new `// --- sliceN-name ---` pair for a new feature, with matching `<!-- sliceN-name dialogs -->` and `/* sliceN-name */` blocks. Top-level names must be unique across the whole module: the conformance suite runs `node --check` on `app.js`, and a duplicate declaration fails it.
-2. Put DOM and store code in the feature block: render functions, `Object.assign(ACTIONS, {...})`, `Object.assign(FORMS, {...})`, and any listeners on static elements. A new Config area gets its own container in `index.html` and its own `renderConfig*` function called from `renderConfig()`.
+2. Put DOM and store code in the feature block: render functions, `Object.assign(ACTIONS, {...})`, `Object.assign(FORMS, {...})`, and any listeners on static elements. A new Config area is a tab: add its name to `CONFIG_TABS`, a `<section id="config-{tab}" data-ctab="{tab}" role="tabpanel" hidden>` between `<!-- config-tab:{tab} -->` anchors in `index.html`, and its `renderConfig*` function in `CONFIG_RENDERERS` between `// config-tab:{tab}` anchors. Settings and Logs already have their shells.
 3. Put pure functions in a separate `// --- name-logic ---` block with no `document`, `store`, or `api` references. Node runs the block on its own.
 4. Add `tests/test_ui_<name>.py`: import `slice_section` and `run_node` from `tests.test_ui_js`, concatenate the needed blocks (`constants`, `fmt`, `logic`, and yours), and assert on JSON output. Skip when `node` is missing.
 5. Keep the conformance rules: build DOM with `el()`, no inline handlers, dialogs for confirmations, `act()` around every mutation for busy state and duplicate suppression, `formError()` to keep input on failure, `schedule(true)` after success.

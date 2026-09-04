@@ -67,6 +67,29 @@ class DocumentConformanceTests(unittest.TestCase):
         self.assertIn('"orchestra-next.ui"', self.js)
         self.assertNotRegex(self.js, r'"orchestra\.[a-z]', "V2 key name")
 
+    def test_config_tabs_exist_and_route(self):
+        tabs = ["profiles", "groups", "identities", "storage", "audit", "settings", "logs", "diagnostics"]
+        for tab in tabs:
+            self.assertIn(f'<section id="config-{tab}" data-ctab="{tab}" role="tabpanel" hidden>', self.html, tab)
+            self.assertIn(f"<!-- config-tab:{tab} -->", self.html)
+            self.assertIn(f"<!-- /config-tab:{tab} -->", self.html)
+            self.assertIn(f"// config-tab:{tab}", self.js)
+            self.assertIn(f"// /config-tab:{tab}", self.js)
+        for name in ("renderConfigSettings", "renderConfigLogs"):
+            self.assertIn(f"function {name}()", self.js)
+        if shutil.which("node") is None:
+            self.skipTest("node is unavailable")
+        from tests.test_ui_js import run_node, slice_section
+        script = slice_section("constants") + slice_section("router") + """
+          globalThis.store = { ui: { section: "activity", configTab: "audit" } };
+          const at = (hash) => { globalThis.location = { hash }; return parseHash(); };
+          console.log(JSON.stringify({ logs: at("#/config/logs"), last: at("#/config"), bad: at("#/config/nope"), tabs: CONFIG_TABS }));"""
+        value = run_node(script)
+        self.assertEqual(value["logs"], {"view": "config", "runId": None, "section": "logs"})
+        self.assertEqual(value["last"]["section"], "audit")
+        self.assertEqual(value["bad"]["section"], "audit")
+        self.assertEqual(value["tabs"], tabs)
+
     def test_dark_scheme_and_reduced_motion_are_declared(self):
         self.assertIn("prefers-color-scheme: dark", self.css)
         self.assertIn("prefers-reduced-motion: reduce", self.css)
