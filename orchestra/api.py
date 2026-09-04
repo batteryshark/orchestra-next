@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import urllib.parse
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -178,6 +179,57 @@ def _log_tail(path: Path, query: dict, note: str) -> dict:
 
 def _service_log_path() -> Path:
     return paths.logs_dir() / "daemon.log"
+
+
+DIRECTORY_LIMIT = 500  # ponytail: one flat page; paginate if a real directory ever exceeds it
+
+
+def _git_branch(directory: Path) -> str | None:
+    """Branch name from .git/HEAD without spawning git; None when not a repo or detached."""
+    marker = directory / ".git"
+    try:
+        git_dir = marker
+        if marker.is_file():  # linked worktree: "gitdir: <path>"
+            git_dir = Path(marker.read_text(encoding="utf-8").split(":", 1)[1].strip())
+        head = (git_dir / "HEAD").read_text(encoding="utf-8").strip()
+    except (OSError, IndexError, UnicodeDecodeError):
+        return None
+    return head.removeprefix("ref: refs/heads/") if head.startswith("ref: refs/heads/") else None
+
+
+def host_directories(con, raw: str | None, *, hidden: bool = False) -> dict:
+    """One level of the daemon host's directory tree for the cwd picker.
+
+    Only paths under the operator's home or under a configured group cwd are
+    listed; anything else is 403. Symlinked directories are not followed.
+    """
+    text = (raw or "").strip() or str(Path.home())
+    try:
+        base = Path(text).expanduser().resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise Problem(404, f"{text} is not a directory") from exc
+    if not base.is_dir():
+        raise Problem(404, f"{base} is not a directory")
+    roots = [Path.home().resolve()]
+    for row in groups.all_groups(con, include_archived=True):
+        if row["default_cwd"]:
+            roots.append(Path(row["default_cwd"]).resolve())
+    if not any(base == root or root in base.parents for root in roots):
+        raise Problem(403, f"{base} is outside the operator home and group directories")
+    try:
+        names = sorted((entry.name for entry in os.scandir(base)
+                        if entry.is_dir(follow_symlinks=False) and (hidden or not entry.name.startswith("."))),
+                       key=str.lower)
+    except OSError as exc:
+        raise Problem(403, f"{base} could not be read") from exc
+    return {
+        "path": str(base),
+        "parent": None if base.parent == base else str(base.parent),
+        "git": (base / ".git").exists(),
+        "branch": _git_branch(base),
+        "entries": [{"name": name, "path": str(base / name), "git": (base / name / ".git").exists()} for name in names[:DIRECTORY_LIMIT]],
+        "truncated": len(names) > DIRECTORY_LIMIT,
+    }
 
 
 class API:
@@ -462,6 +514,11 @@ class API:
             note = _body(body).get("note")
             settings.set_paused(self.con, parts[1] == "pause", actor=_actor(identity), note=None if note is None else str(note)[:500])
             return Response(200, envelope(self.con, settings.payload(self.con)))
+
+
+        if parts == ["host-directories"] and method == "GET":
+            _operator(identity)
+            return Response(200, envelope(self.con, host_directories(self.con, query.get("path"), hidden=query.get("hidden") == "1")))
 
         if parts == ["groups"]:
             if method == "GET":

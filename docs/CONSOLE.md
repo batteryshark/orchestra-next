@@ -22,7 +22,7 @@ Browser pairing:
 
 1. Run `orchestra-next pair` in a terminal. The CLI calls `POST /api/auth/pair` with the operator bearer and prints a 12-character code (`XXXX-XXXX-XXXX`, default TTL 300 s, single use). Case, dashes, and spaces are ignored; `O`→`0`, `I`/`L`→`1`.
 2. The pairing screen posts `POST /api/auth/pair/redeem {code, name, cookie: true}`.
-3. The reply is `201` with the device record only. The bearer travels in `Set-Cookie: orchestra_device=od_…; Path=/; Max-Age=31536000; HttpOnly; SameSite=Strict`. JavaScript never sees the token. The only `localStorage` entry is `orchestra-next.ui` (fleet filters, the machine-events toggle, the last run section, the last Config tab as `configTab`); every access is wrapped in `try`, and the console works with storage unavailable.
+3. The reply is `201` with the device record only. The bearer travels in `Set-Cookie: orchestra_device=od_…; Path=/; Max-Age=31536000; HttpOnly; SameSite=Strict`. JavaScript never sees the token. The only `localStorage` entry is `orchestra-next.ui` (fleet filters, the machine-events toggle, the last run section, the last Config tab as `configTab`, the usage window, the last-used dispatch profile and group); every access is wrapped in `try`, and the console works with storage unavailable.
 
 Credential resolution: an `Authorization: Bearer` header wins; otherwise the cookie. CSRF rule for non-GET requests: a cookie-authenticated request must carry `Origin` equal to `http://` + `Host`, exactly. A trusted-network peer that sends an `Origin` must also match; a trusted peer with no `Origin` (curl) passes. Bearer requests skip the check. CLI and services use bearers (`od_` device, `os_` service, `or_` run worker).
 
@@ -83,6 +83,10 @@ Dark values are redefined under `@media (prefers-color-scheme: dark)`; `<meta na
 
 *Fleet usage strip* (`// fleet-usage` block; markup between `<!-- fleet-usage -->` anchors): a `<details id="fleet-usage">` under the counts strip whose summary reads "Last 24h · N runs · X tokens (Y in / Z out / C cached)" from `GET /api/usage/summary` (`fleetUsageLine`; cached = cache_read + cache_write; numbers via `fmt.tokens`). The 24h / 7d buttons (`usage-window` action) persist as `usageWindow` in the `orchestra-next.ui` storage object and poll at once; expanding the details shows a per-route table (route, runs, input, output, cache read, cache write, total). `tick()` refreshes the summary on the normal poll cycle only while the Fleet view is current; there is no extra timer. Raw token facts only — never prices, currency, quota, or burn.
 
+*Dispatch form* (`new-run-form` block). The objective textarea comes first and is the largest field; Advanced stays collapsed. The profile select labels each option `slug · provider/model · effort` via `profileOptionLabel()` and disables profiles with `enabled: false` (archived ones are omitted). Changing the group fills the working-directory field with the group's `default_cwd` when the field is empty or still holds the previous group's cwd. The last-used profile and group are saved in `store.ui.dispatch` (persisted in `orchestra-next.ui`) and restored on load through the selects' `_pending` values. Under the form, `dispatchSummary()` renders one line: "Will run <profile> in <cwd> (git: <branch>)"; the cwd is the field value, else the group default. The branch comes from a debounced `GET /api/host-directories?path=<cwd>` (cached per path in `dirInfoCache`); a 404 turns the line red ("not a directory"), a 403 (outside the browsable roots) drops the branch only. The `dispatch` FORMS handler is wrapped in the block: it refuses an empty objective or a disabled profile inline with `formError()`, then delegates to the original handler; API 400s (bad cwd, contract errors) surface through the same `.form-error` line.
+
+*Directory picker* (`<dialog id="dir-picker">`, opened by "Browse…" / `browse-cwd`). `openDirPicker(start)` resolves to the chosen absolute path or null. It starts at the field's cwd, else the group cwd, else the operator's home (an unbrowsable start path falls back to home once). `renderPicker()` draws a breadcrumb of clickable path segments (`picker-go`), the subdirectory list with a `git` chip (`picker-enter`), "Up" (`picker-up`, disabled at the filesystem root), Cancel, and "Use this directory" (`picker-use`, which closes with `returnValue "ok"`). Errors from the API show in `#dir-picker-state` and keep the current listing.
+
 **Run.** The header shows the label, status (`paused` overrides), waiting detail, and chips: profile, route, permission mode (red for full access), strategy, goal state and rounds (attempts for ralph), repairs, corrected, active time, resume count, cache epoch. `RUN_ACTION_MATRIX` decides the buttons:
 
 | Status | Actions |
@@ -126,6 +130,10 @@ From the `keydown` handler in `--- boot ---`. Keys are ignored while typing, exc
 | `[` `]` | Config | previous / next tab |
 | `t` | Run | open Direct |
 | `End` | Run | follow live |
+| `↓` `↑` `Home` `End` | directory picker | move across subdirectories |
+| `Enter` | directory picker, row focused | open that directory |
+| `Backspace` | directory picker | go to the parent directory |
+| Cmd/Ctrl+`Enter` | directory picker | use the current directory |
 
 ## 7. Tests
 
@@ -140,6 +148,10 @@ Run `python3 run_tests.py`. It runs one process per module; pass substrings to s
 | `tests/test_ui_config.py` | `config-logic`: `profileBody`, `profilePatch`, `groupPatch`, `modelEfforts`. |
 | `tests/test_ui_evidence.py` | `evidence-logic`: `absorbHistory`, `rawEventRows`, `previewPlan`. |
 | `tests/test_api.py` | In-process `API.handle`: vocabulary, revision guards, leases and service authorities, `auth/me` kinds, `/api/models` cache and 503, `/api/runs` filters and paging, log tails (`bytes`, `after`, the 256 KiB cap, missing files, operator and run-scoped authority), device and token management, `board_revision` bumps on every mutation, pause payload, readiness. |
+
+| `tests/test_ui_newrun.py` | `new-run-logic`: `profileOptionLabel`, `dispatchSummary`, `pathCrumbs`; dispatch form order, picker dialog ids and actions, anchor blocks. |
+| `tests/test_api_host_directories.py` | `GET /api/host-directories`: subdirectories only, sort, git flag and branch, hidden filter, home default, 403 outside home and group cwds, 404 for files, operator-only. |
+| `tests/test_api.py` | In-process `API.handle`: vocabulary, revision guards, leases and service authorities, `auth/me` kinds, `/api/models` cache and 503, `/api/runs` filters and paging, device and token management, `board_revision` bumps on every mutation, pause payload, readiness. |
 | `tests/test_api_events.py` | `_event_page`: default ascending page, `order=desc` with `limit` and `before`, the global feed, 400 on bad values. |
 
 ## 8. How to add a feature
@@ -155,5 +167,5 @@ A server change is needed when a view cannot be correct or efficient with the cu
 ## 9. Known gaps
 
 - Fleet rows carry no child count. The counts strip counts the loaded window, not the whole server, once a server-side filter is active.
-- No UI state is retained across reloads: filters and "Show machine events" reset. The console never uses `localStorage`.
+- Retained UI state is limited to the one `orchestra-next.ui` entry: filters, "Show machine events", the last run section, and the last dispatch profile and group. Draft objectives are not retained.
 - Evidence shows the verifier argv but not its output or callback records; verifier output appears only on `verification.failed` rows in Activity.

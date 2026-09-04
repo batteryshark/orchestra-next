@@ -36,6 +36,8 @@ GET       /api/messages
 GET|PATCH /api/settings
 POST      /api/scheduler/pause
 POST      /api/scheduler/resume
+
+GET       /api/host-directories
 GET       /api/attention
 POST      /api/attention/{id}/lease
 POST      /api/attention/{id}/answer
@@ -57,6 +59,8 @@ List/feed endpoints accept an `after` cursor where applicable; `/api/runs`, `/ap
 `stop-tree` (body `{reason?}`, authority `stop`) queues a `stop` control for the run and every non-terminal descendant, walking child runs recursively. It answers `202` with `{run_id, stopped: [ids]}`; already-terminal runs are skipped. The CLI form is `orchestra-next stop-tree --run ID [--reason TEXT]`.
 
 `GET /api/usage/summary?window=24h|7d` (default `24h`; or `since=<iso>` to set the lower bound directly; `read` authority) answers `{window, since, runs, totals, routes}`: `routes` is one row per `provider/model` with `runs` (distinct run ids), `input`, `output`, `cache_read`, `cache_write`, `total` token sums over the window, ordered by `total` descending; `totals` sums the same keys; `runs` counts distinct runs. One `GROUP BY` query over `usage_events.observed_at >= since`. Raw token facts only: no prices, currency, quota, or burn rate.
+
+`GET /api/host-directories?path=<abs>[&hidden=1]` backs the console's working-directory picker. Operator identities only (`device`, `network`); service tokens and run workers get 403. It lists one level: `{path, parent, git, branch, entries: [{name, path, git}], truncated}`. `entries` holds subdirectories only (no files, symlinks not followed), sorted case-insensitively, capped at 500; dot-directories appear only with `hidden=1`. `git` marks a `.git` entry; `branch` comes from `.git/HEAD` (null when detached or not a repo). An empty `path` means the operator's home. Paths must resolve under the operator's home or under a group `default_cwd`; anything else is 403. A missing path or a file is 404.
 
 `pause` parks the run at the next safe boundary: the current step is cancelled, the worktree is checkpointed, the DSH process stops, and capacity is released. The run reports `status: waiting` with a null `waiting_kind`, a `waiting_detail` beginning with `paused`, and `paused: true` in its payload. `resume` continues the same session.
 

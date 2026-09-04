@@ -186,9 +186,10 @@ class UiLogicTests(unittest.TestCase):
         self.assertNotIn("follow", value["raw"])
         self.assertEqual(value["raw"]["filters"]["strategy"], "swarm")
         self.assertEqual(value["back"], {"filters": {"status": ["failed", "running"], "group": "g1", "profile": "7", "text": "auth", "strategy": "swarm"},
-                                         "machine": True, "section": "usage", "configTab": "audit", "usageWindow": "7d"})
+                                         "machine": True, "section": "usage", "configTab": "audit", "usageWindow": "7d", "dispatch": {"profile": "", "group": ""}})
         self.assertFalse(value["no_strategy"])
-        defaults = {"filters": {"status": [], "group": "", "profile": "", "text": ""}, "machine": False, "section": "activity", "configTab": "profiles", "usageWindow": "24h"}
+        defaults = {"filters": {"status": [], "group": "", "profile": "", "text": ""}, "machine": False, "section": "activity", "configTab": "profiles", "usageWindow": "24h",
+                    "dispatch": {"profile": "", "group": ""}}
         self.assertEqual(value["bad"], [defaults] * 3)
 
 
