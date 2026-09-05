@@ -67,6 +67,29 @@ class UiLogicTests(unittest.TestCase):
         self.assertEqual(value["excerpt"], "first line")
         self.assertEqual(value["countdown_expired"], "expired")
 
+    def test_selected_tab_is_revealed_without_resetting_manual_scroll_on_poll(self):
+        source = APP_JS.read_text(encoding="utf-8")
+        helper = "function revealSelectedTab" + source.split("function revealSelectedTab", 1)[1].split("let renderedPage", 1)[0]
+        value = run_node(helper + """
+          let selected = null;
+          const tabs = { scrollLeft: 0, querySelector: () => selected,
+                         getBoundingClientRect: () => ({left: 12, right: 308}) };
+          revealSelectedTab(tabs); // Empty/loading tabs are harmless.
+          selected = {getBoundingClientRect: () => ({left: 400, right: 460})};
+          revealSelectedTab(tabs);
+          const right = tabs.scrollLeft;
+          tabs.scrollLeft = 25; // User swipes back to inspect other tabs.
+          revealSelectedTab(tabs);
+          const polled = tabs.scrollLeft;
+          selected = {getBoundingClientRect: () => ({left: -13, right: 80})};
+          revealSelectedTab(tabs);
+          const left = tabs.scrollLeft;
+          selected = {getBoundingClientRect: () => ({left: 20, right: 100})};
+          revealSelectedTab(tabs);
+          console.log(JSON.stringify({right, polled, left, visible: tabs.scrollLeft}));
+        """)
+        self.assertEqual(value, {"right": 152, "polled": 25, "left": 0, "visible": 0})
+
     def test_runs_query_builds_server_filters(self):
         value = self.evaluate("""({
           none: runsQuery({status: new Set(), group: "", profile: "", text: "x"}),

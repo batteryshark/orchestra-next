@@ -75,7 +75,9 @@ CSS (`app.css`) declares layers `tokens, base, components, views, utilities`. To
 | `--font-ui`, `--font-mono`, `--fs-xs` … `--fs-l` | type |
 | `--sp-1` … `--sp-6`, `--radius-s`, `--radius-m`, `--row-pad`, `--clip-max` | spacing and shape |
 
-Dark values are redefined under `@media (prefers-color-scheme: dark)`; `<meta name="color-scheme">` and `html { color-scheme }` follow the system. `prefers-reduced-motion: reduce` removes transitions and animations. The focus ring is a 2 px outline on `:focus-visible`. Below 720 px the grid collapses, the dispatch form goes static, and the feed shortens.
+Dark values are redefined under `@media (prefers-color-scheme: dark)`; `<meta name="color-scheme">` and `html { color-scheme }` follow the system. `prefers-reduced-motion: reduce` removes transitions and animations. The focus ring is a 2 px outline on `:focus-visible`.
+
+On phones (below 720 px, or coarse-pointer screens below 1024 px including landscape), primary navigation sits at the bottom with safe-area padding. Touch controls are at least 44 px tall and text fields use 16 px type; pinch zoom remains available. Dispatch and attention forms use the full column, dialogs scroll within the viewport, and the activity feed uses a stable viewport height so browser toolbar changes do not constantly resize it. Long select options are contained explicitly for WebKit. `containTables()` wraps data tables in focusable horizontal scroll regions without changing table semantics. `revealSelectedTab()` brings a newly selected tab into view without moving the page or undoing a user's horizontal swipe on subsequent polls. Changing view or opening another run starts at the top; section changes keep the page position.
 
 ## 5. Views
 

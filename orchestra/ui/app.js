@@ -2049,6 +2049,27 @@ function showView(view) {
   }
 }
 
+// Keep wide data inside its own scroll region, with native table semantics.
+function containTables() {
+  for (const table of document.querySelectorAll("table.plain")) {
+    if (table.parentElement.classList.contains("table-scroll")) continue;
+    const region = el("div", { class: "table-scroll", tabindex: "0", role: "region", "aria-label": "Scrollable data table" });
+    table.before(region);
+    region.append(table);
+  }
+}
+
+function revealSelectedTab(tabs) {
+  const selected = tabs.querySelector('[aria-selected="true"]');
+  if (!selected || tabs._selected === selected) return;
+  tabs._selected = selected;
+  const edge = tabs.getBoundingClientRect();
+  const item = selected.getBoundingClientRect();
+  if (item.left < edge.left) tabs.scrollLeft -= edge.left - item.left;
+  else if (item.right > edge.right) tabs.scrollLeft += item.right - edge.right;
+}
+
+let renderedPage = null;
 function render() {
   renderQueued = false;
   const marks = new Set(dirty);
@@ -2064,6 +2085,15 @@ function render() {
   if (marks.has("run") && store.route.view === "run") renderRun();
   if ((marks.has("attention") || marks.has("nav")) && store.route.view === "attention") { renderAttention(); renderOutbox(); }
   if (marks.has("config") && store.route.view === "config") renderConfig();
+  containTables();
+  for (const tabs of document.querySelectorAll('[role="tablist"]')) {
+    if (tabs.getClientRects().length) revealSelectedTab(tabs);
+  }
+  const page = `${store.route.view}:${store.route.runId || ""}`;
+  if (page !== renderedPage) {
+    renderedPage = page;
+    window.scrollTo(0, 0);
+  }
   if (marks.has("auth")) markDirty(store.route.view === "run" ? "run" : store.route.view);
 }
 // --- end views ---
