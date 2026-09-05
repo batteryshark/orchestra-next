@@ -129,17 +129,18 @@ PROVIDER_KEYS = {"meta": "META_API_KEY", "zai": "ZAI_API_KEY"}
 
 def provider_keys(auth_path: Path | None = None, codex_path: Path | None = None) -> dict[str, str]:
     """Env vars for the API-key providers declared in cordis.patch.yml. Missing store or entries = no vars."""
+    # The Codex token comes from the Codex CLI, not OpenCode; resolve it first so a
+    # missing or unreadable OpenCode store cannot take the openai-codex route down with it.
+    keys = codex_key(codex_path)
     path = auth_path or Path(os.environ.get("ORCHESTRA_NEXT_OPENCODE_AUTH", "~/.local/share/opencode/auth.json")).expanduser()
     try:
         store = json.loads(path.read_text())
     except (OSError, UnicodeError, json.JSONDecodeError):
-        return {}
-    keys = {}
+        return keys
     for name, var in PROVIDER_KEYS.items():
         key = (store.get(name) or {}).get("key") if isinstance(store, dict) else None
         if isinstance(key, str) and key:
             keys[var] = key
-    keys.update(codex_key(codex_path))
     return keys
 
 
