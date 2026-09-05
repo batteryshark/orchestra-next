@@ -1989,7 +1989,7 @@ function renderConfigProfiles() {
         title: `Tier ${profile.tier} — ${tierInfo(profile.tier).blurb}`,
         text: `${tierInfo(profile.tier).glyph} ${tierInfo(profile.tier).name}`,
       })),
-      el("td", { text: profile.max_concurrency == null ? "" : String(profile.max_concurrency) }),
+      el("td", { text: profile.max_concurrency == null ? "Unlimited" : String(profile.max_concurrency) }),
       el("td", { text: profile.archived ? "archived" : profile.enabled === false ? "disabled" : "enabled" }),
       el("td", { text: String(profile.revision) }),
       el("td", { class: "row-actions" },
@@ -1998,7 +1998,7 @@ function renderConfigProfiles() {
         el("button", { class: "btn", dataset: { action: "profile-toggle", slug: profile.slug, field: "archived" }, text: profile.archived ? "Unarchive" : "Archive" }))))));
   configFrame(profiles,
     el("p", { class: "config-toolbar" }, el("button", { class: "btn btn-primary", dataset: { action: "profile-new" }, text: "New profile…" })),
-    store.profiles.length ? profileTable : el("p", { class: "view-state", text: "No profiles yet. Create one with New profile." }));
+    store.profiles.length ? configRecordTable(profileTable, "Profiles") : el("p", { class: "view-state", text: "No profiles yet. Create one with New profile." }));
 }
 
 function renderConfigGroups() {
@@ -2009,7 +2009,7 @@ function renderConfigGroups() {
       el("td", { text: group.name }),
       el("td", { class: "mono", text: group.slug }),
       el("td", { class: "mono", text: group.default_cwd || "" }),
-      el("td", { text: group.max_concurrency == null ? "" : String(group.max_concurrency) }),
+      el("td", { text: group.max_concurrency == null ? "Unlimited" : String(group.max_concurrency) }),
       el("td", { text: group.archived ? "archived" : "active" }),
       el("td", { text: String(group.revision) }),
       el("td", { class: "row-actions" },
@@ -2018,7 +2018,7 @@ function renderConfigGroups() {
         el("button", { class: "btn", dataset: { action: "group-archive", slug: group.slug }, text: group.archived ? "Unarchive" : "Archive" }))))));
   configFrame(groupsBox,
     el("p", { class: "config-toolbar" }, el("button", { class: "btn btn-primary", dataset: { action: "group-new" }, text: "New group…" })),
-    store.groups.length ? groupTable : el("p", { class: "view-state", text: "No groups yet. Create one with New group." }));
+    store.groups.length ? configRecordTable(groupTable, "Groups") : el("p", { class: "view-state", text: "No groups yet. Create one with New group." }));
 }
 
 function renderConfigDiagnostics() {
@@ -2089,7 +2089,7 @@ function render() {
   for (const tabs of document.querySelectorAll('[role="tablist"]')) {
     if (tabs.getClientRects().length) revealSelectedTab(tabs);
   }
-  const page = `${store.route.view}:${store.route.runId || ""}`;
+  const page = `${store.route.view}:${store.route.runId || (store.route.view === "config" ? store.route.section : "")}`;
   if (page !== renderedPage) {
     renderedPage = page;
     window.scrollTo(0, 0);
@@ -2451,6 +2451,26 @@ store.identities = null; // { devices, tokens, revision }
 
 function tableHead(labels) {
   return el("thead", null, el("tr", null, ...labels.map((label) => el("th", { text: label }))));
+}
+
+function configRecordTable(table, name) {
+  table.classList.add("config-records");
+  table.setAttribute("aria-label", name);
+  // Explicit roles retain table semantics when mobile CSS changes the layout.
+  table.setAttribute("role", "table");
+  for (const group of table.children) group.setAttribute("role", "rowgroup");
+  const headings = [...table.querySelectorAll("th")];
+  for (const heading of headings) heading.setAttribute("role", "columnheader");
+  for (const row of table.rows) row.setAttribute("role", "row");
+  for (const row of table.tBodies[0].rows) {
+    [...row.cells].forEach((cell, index) => {
+      cell.setAttribute("role", "cell");
+      if (cell.classList.contains("row-actions")) return;
+      if (!cell.textContent) cell.textContent = "Not set";
+      cell.prepend(el("span", { class: "record-label", "aria-hidden": "true", text: headings[index].textContent }));
+    });
+  }
+  return table;
 }
 
 function configError(box, message) {

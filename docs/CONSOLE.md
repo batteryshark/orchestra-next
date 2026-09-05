@@ -77,7 +77,7 @@ CSS (`app.css`) declares layers `tokens, base, components, views, utilities`. To
 
 Dark values are redefined under `@media (prefers-color-scheme: dark)`; `<meta name="color-scheme">` and `html { color-scheme }` follow the system. `prefers-reduced-motion: reduce` removes transitions and animations. The focus ring is a 2 px outline on `:focus-visible`.
 
-On phones (below 720 px, or coarse-pointer screens below 1024 px including landscape), primary navigation sits at the bottom with safe-area padding. Touch controls are at least 44 px tall and text fields use 16 px type; pinch zoom remains available. Dispatch and attention forms use the full column, dialogs scroll within the viewport, and the activity feed uses a stable viewport height so browser toolbar changes do not constantly resize it. Long select options are contained explicitly for WebKit. `containTables()` wraps data tables in focusable horizontal scroll regions without changing table semantics. `revealSelectedTab()` brings a newly selected tab into view without moving the page or undoing a user's horizontal swipe on subsequent polls. Changing view or opening another run starts at the top; section changes keep the page position.
+On phones (below 720 px, or coarse-pointer screens below 1024 px including landscape), primary navigation sits at the bottom with safe-area padding. Touch controls are at least 44 px tall and text fields use 16 px type; pinch zoom remains available. Dispatch and attention forms use the full column, dialogs scroll within the viewport, and the activity feed uses a stable viewport height so browser toolbar changes do not constantly resize it. Long select options are contained explicitly for WebKit. `containTables()` wraps data tables in focusable horizontal scroll regions without changing table semantics. `revealSelectedTab()` brings a newly selected tab into view without moving the page or undoing a user's horizontal swipe on subsequent polls. Profiles and Groups use labeled cards on phones, with full-width routes/directories and wrapping action buttons; their desktop tables keep the same columns. Other data tables retain horizontal scrolling without squeezing words into single-character columns. Changing view, switching Config tabs, or opening another run starts at the top; run section changes keep the page position.
 
 ## 5. Views
 
@@ -155,6 +155,10 @@ Run `python3 run_tests.py`. It runs one process per module; pass substrings to s
 | `tests/test_api_host_directories.py` | `GET /api/host-directories`: subdirectories only, sort, git flag and branch, hidden filter, home default, 403 outside home and group cwds, 404 for files, operator-only. |
 | `tests/test_api.py` | In-process `API.handle`: vocabulary, revision guards, leases and service authorities, `auth/me` kinds, `/api/models` cache and 503, `/api/runs` filters and paging, device and token management, `board_revision` bumps on every mutation, pause payload, readiness. |
 | `tests/test_api_events.py` | `_event_page`: default ascending page, `order=desc` with `limit` and `before`, the global feed, 400 on bad values. |
+
+### Mobile layout regression
+
+With Playwright and its WebKit browser installed, run `node tests/check_ui_mobile.cjs` (set `NODE_PATH` if Playwright is installed outside the project). This isolated fixture test checks Profiles and Groups at 320 px, 390 px, landscape, and desktop widths, including long paths, readable card fields, reachable actions, profile editing, and group directory submission. Set `UI_SCREENSHOTS` to an existing output directory to capture previews. No live fleet is used.
 
 ## 8. How to add a feature
 

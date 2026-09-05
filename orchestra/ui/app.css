@@ -188,7 +188,7 @@
     padding: var(--sp-1) var(--sp-4); border-radius: var(--radius-s);
     font-size: var(--fs-s);
   }
-  table.plain { border-collapse: collapse; width: 100%; font-size: var(--fs-s); }
+  table.plain { border-collapse: collapse; width: 100%; font-size: var(--fs-s); overflow-wrap: normal; }
   table.plain th, table.plain td { text-align: left; padding: var(--sp-2) var(--sp-4) var(--sp-2) 0; border-bottom: 1px solid var(--line); }
   table.plain th { color: var(--muted); font-weight: 500; }
 }
@@ -407,6 +407,7 @@
   .config-sub { font-size: var(--fs-s); color: var(--muted); margin: var(--sp-4) 0 var(--sp-2); }
   .row-actions { display: flex; gap: var(--sp-2); white-space: nowrap; }
   .row-actions .btn { padding: 0 var(--sp-3); font-size: var(--fs-xs); }
+  .record-label { display: none; }
   .token-raw { background: var(--soft); border-radius: var(--radius-s); padding: var(--sp-3); user-select: all; }
   /* end slice2-config */
 
@@ -546,6 +547,29 @@
     table.plain th, table.plain td { padding: var(--sp-3); }
     .row-actions { gap: var(--sp-3); }
     .row-actions .btn { padding-inline: var(--sp-3); }
+    .table-scroll:has(> .config-records) { overflow: visible; border: none; }
+    table.config-records, .config-records tbody { display: block; width: 100%; }
+    .config-records thead {
+      position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%);
+    }
+    .config-records tbody tr {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-4);
+      padding: var(--sp-5); margin-bottom: var(--sp-4);
+      background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-m);
+    }
+    table.config-records td {
+      display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-2);
+      min-width: 0; padding: 0; border: none; overflow-wrap: anywhere; white-space: normal;
+    }
+    .config-records td:nth-child(-n+3), .config-records td.row-actions { grid-column: 1 / -1; }
+    .config-records td:first-child { font-size: var(--fs-l); font-weight: 600; }
+    .config-records .record-label { display: block; font: var(--fs-s)/1.4 var(--font-ui); color: var(--muted); }
+    .config-records td:first-child .record-label { display: none; }
+    table.config-records td.row-actions {
+      flex-direction: row; flex-wrap: wrap; align-items: stretch; gap: var(--sp-3);
+      padding-top: var(--sp-4); border-top: 1px solid var(--line);
+    }
+    .config-records .row-actions .btn { flex: 1 1 100px; font-size: var(--fs-s); white-space: normal; }
     dialog {
       width: calc(100% - 24px); max-width: 36em;
       max-height: calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
