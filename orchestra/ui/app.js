@@ -20,6 +20,14 @@ const STATUS_GROUPS = {
   failed: ["failed", "timed_out"],
   done: ["completed", "stopped", "skipped"],
 };
+// Tier is a delegation ceiling, not a priority: a child run's tier must be <= its
+// parent's. The names and glyphs exist because a bare 1/2/3 says nothing about that.
+const TIERS = {
+  3: { name: "Lead", glyph: "\u25c6\u25c6\u25c6", blurb: "Plans and delegates. May spawn children of any tier." },
+  2: { name: "General", glyph: "\u25c6\u25c6", blurb: "All-rounder. May spawn General and Worker children." },
+  1: { name: "Worker", glyph: "\u25c6", blurb: "Focused execution. May spawn Worker children only." },
+};
+const tierInfo = (tier) => TIERS[tier] || { name: `Tier ${tier}`, glyph: "", blurb: "" };
 // --- end constants ---
 
 // --- fmt ---
@@ -1976,7 +1984,11 @@ function renderConfigProfiles() {
       el("td", { text: profile.name }),
       el("td", { class: "mono", text: profile.slug }),
       el("td", { class: "mono", text: `${profile.provider}/${profile.model}${profile.effort ? "·" + profile.effort : ""}` }),
-      el("td", { text: String(profile.tier) }),
+      el("td", null, el("span", {
+        class: `chip tier tier-${profile.tier}`,
+        title: `Tier ${profile.tier} — ${tierInfo(profile.tier).blurb}`,
+        text: `${tierInfo(profile.tier).glyph} ${tierInfo(profile.tier).name}`,
+      })),
       el("td", { text: profile.max_concurrency == null ? "" : String(profile.max_concurrency) }),
       el("td", { text: profile.archived ? "archived" : profile.enabled === false ? "disabled" : "enabled" }),
       el("td", { text: String(profile.revision) }),
@@ -2472,6 +2484,14 @@ function fillRouteLists(form) {
   document.getElementById("profile-efforts").replaceChildren(...modelEfforts(models, provider, model).map(option));
 }
 
+// The tier number alone tells an operator nothing; spell out what it grants.
+function syncTierHelp(form) {
+  const help = form.querySelector("[data-tier-help]");
+  if (!help) return;
+  const info = tierInfo(Number(form.elements.tier.value));
+  help.textContent = `${info.glyph} ${info.name} — ${info.blurb} Tier is a delegation ceiling, not a scheduling priority.`;
+}
+
 function openProfileDialog(profile) {
   const dialog = document.getElementById("profile-dialog");
   const form = dialog.querySelector("form");
@@ -2480,6 +2500,7 @@ function openProfileDialog(profile) {
   document.getElementById("profile-dialog-title").textContent = profile ? `Edit profile ${profile.slug}` : "New profile";
   form.elements.slug.closest("label").hidden = Boolean(profile);
   if (profile) for (const key of PROFILE_FIELDS) form.elements[key].value = profile[key] ?? "";
+  syncTierHelp(form);
   formError(form, store.catalogError);
   fillRouteLists(form);
   dialog.showModal();
@@ -2625,7 +2646,10 @@ Object.assign(FORMS, {
   }),
 });
 
-document.querySelector("form[data-form=profile]").addEventListener("input", (event) => fillRouteLists(event.currentTarget));
+document.querySelector("form[data-form=profile]").addEventListener("input", (event) => {
+  fillRouteLists(event.currentTarget);
+  syncTierHelp(event.currentTarget);
+});
 document.getElementById("token-reveal").addEventListener("close", () => { document.getElementById("token-raw").textContent = ""; });
 // --- end slice2-config ---
 
