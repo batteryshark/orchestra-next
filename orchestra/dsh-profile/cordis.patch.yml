@@ -87,6 +87,11 @@
             contextWindow: 400000
             maxTokens: 128000
             reasoningEfforts: {low: low, medium: medium, high: high, xhigh: xhigh}
+          - id: gpt-6-astra
+            name: GPT-6 Astra
+            contextWindow: 400000
+            maxTokens: 128000
+            reasoningEfforts: {low: low, medium: medium, high: high, xhigh: xhigh}
 
       meta:
         displayName: Meta
