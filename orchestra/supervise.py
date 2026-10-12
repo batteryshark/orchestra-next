@@ -200,7 +200,9 @@ def supervise(run_id: int) -> int:
     sidecar = None
     try:
         with con:
-            changed = con.execute("UPDATE runs SET status='starting',waiting_kind=NULL,waiting_detail=NULL,started_at=COALESCE(started_at,?),updated_at=?,revision=revision+1 WHERE id=? AND status='queued'", (db.now(), db.now(), run_id))
+            # The supervisor's own pid holds dsh_pid until DSH is up, so the daemon's
+            # recover() does not mistake a slow DSH boot for a dead resident process.
+            changed = con.execute("UPDATE runs SET status='starting',waiting_kind=NULL,waiting_detail=NULL,dsh_pid=?,started_at=COALESCE(started_at,?),updated_at=?,revision=revision+1 WHERE id=? AND status='queued'", (os.getpid(), db.now(), db.now(), run_id))
         if changed.rowcount != 1:
             return 0
         run = runs.find(con, run_id)
@@ -331,7 +333,9 @@ def supervise(run_id: int) -> int:
                 _open_failure(con, run_id, "alert", f"Ralph stopped with status {updates.ralph_status}; its workflow was not replayed")
                 peer.close()
                 return 1
-            completed = (current["strategy"] == "goal" and current["goal_state"] in ("complete", "completed")) or (current["strategy"] == "ralph" and updates.ralph_status == "complete")
+            # DSH 0.2 journals goal completion before the turn ends and rejects a new
+            # prompt while one is in flight, so completion is acted on only once settled.
+            completed = prompt_settled and ((current["strategy"] == "goal" and current["goal_state"] in ("complete", "completed")) or (current["strategy"] == "ralph" and updates.ralph_status == "complete"))
             if completed:
                 evidence = _checkpoint(run_id, workdir_path)
                 with con:

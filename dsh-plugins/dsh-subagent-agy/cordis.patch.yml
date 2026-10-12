@@ -1,0 +1,5 @@
+# Register the agy provider on the Host plane. An agent preset grants the
+# model-facing `subagent_agy` tool separately (see scripts/dsh-fleet-preset).
+- insert:
+    - id: subagent-agy
+      name: '@orchestra-next/dsh-subagent-agy'

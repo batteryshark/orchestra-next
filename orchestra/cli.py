@@ -48,6 +48,18 @@ def cmd_dsh_setup(args):
     _print(result)
 
 
+def cmd_keys(args):
+    """Expose OpenCode's stored API keys to another program without printing them."""
+    keys = dsh.provider_keys()
+    if args.action == "list":
+        _print({"available": sorted(keys)})
+        return 0
+    argv = [item for item in args.argv if item != "--"] if args.argv[:1] == ["--"] else args.argv
+    if not argv:
+        raise ValueError("keys exec needs a command: orchestra-next keys exec -- <cmd> [args...]")
+    os.execvpe(argv[0], argv, {**os.environ, **keys})
+
+
 def cmd_dsh_check(args):
     result = dsh.check_profile()
     if args.capabilities:
@@ -274,6 +286,12 @@ def build_parser():
     for name in ("pause", "resume-scheduler"):
         item = sub.add_parser(name, help="pause or resume fleet admission; running runs continue"); item.add_argument("note", nargs="?"); item.set_defaults(func=cmd_scheduler)
     upd = sub.add_parser("update", help="fast-forward this checkout to origin/main"); upd.add_argument("--check", action="store_true"); upd.set_defaults(func=cmd_update)
+    keys = sub.add_parser("keys", help="run a command with OpenCode's API keys in its environment")
+    keys_sub = keys.add_subparsers(dest="action", required=True)
+    keys_sub.add_parser("list", help="names of the variables that would be set (never values)").set_defaults(func=cmd_keys)
+    keys_exec = keys_sub.add_parser("exec", help="exec a command with the keys exported")
+    keys_exec.add_argument("argv", nargs=argparse.REMAINDER)
+    keys_exec.set_defaults(func=cmd_keys)
     bak = sub.add_parser("backup"); bak.add_argument("dest", nargs="?"); bak.set_defaults(func=cmd_backup)
     res = sub.add_parser("restore"); res.add_argument("backup"); res.add_argument("--apply", action="store_true"); res.set_defaults(func=cmd_restore)
     return parser

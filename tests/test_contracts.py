@@ -61,7 +61,7 @@ class ContractTests(StateCase):
         wrong.write_text("#!/bin/sh\necho 'dsh 9.9.9'\n", encoding="utf-8")
         wrong.chmod(0o700)
         os.environ["ORCHESTRA_NEXT_DSH"] = str(wrong)
-        with self.assertRaisesRegex(dsh.DshError, "requires exactly 0.1.2-alpha.3"):
+        with self.assertRaisesRegex(dsh.DshError, "requires exactly 0.2.0-rc.2"):
             dsh.require_version()
 
     def test_worker_auth_is_file_only(self):

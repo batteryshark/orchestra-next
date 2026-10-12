@@ -49,7 +49,7 @@ Every model you can reach through DSH becomes a route: DeepSeek, Claude, GPT via
 ## Requirements
 
 - Python 3.11 or newer
-- DSH exactly `0.1.2-alpha.3` (`npm i -g @deepseek-ai/dsh@0.1.2-alpha.3`)
+- DSH exactly `0.2.0-rc.2` (`npm i -g @deepseek-ai/dsh@0.2.0-rc.2`)
 - Git
 - Optional: Node/npm and the authenticated `claude` CLI for the Claude subscription route
 
@@ -92,6 +92,40 @@ API keys are read from OpenCode's `auth.json` when present and passed to DSH as 
 The Claude subscription sidecar is for private evaluation. Anthropic's Agent SDK terms require approval before a third-party product offers claude.ai login; use an API-key route for public deployment unless that approval exists.
 
 Migrating from the previous Orchestra: `orchestra-next profiles-import-v2` maps the old profiles onto DSH routes, reports what it can and cannot route, and creates them with `--apply`.
+
+## Local fleet and CLI delegates
+
+`scripts/fleet` (symlink it to `~/.local/bin/fleet`) finds and switches the local services, all user LaunchAgents on loopback:
+
+```sh
+fleet                          # status: orchestra (8766), tarmac (8767), dsh-web (3080)
+fleet up|down [svc...]         # down stays off across logins
+fleet restart|reinstall [svc...]
+fleet logs <svc> [-f]
+fleet open dsh-web             # opens the UI with its current session token
+```
+
+`orchestra-next keys list` names the API keys found in OpenCode's store (`auth.json` for OpenCode 1.x, `opencode.db` for 2.x), and `orchestra-next keys exec -- <cmd>` runs any program with them exported, without printing them. dsh web runs under it.
+
+### Delegating to the official CLIs
+
+Subscriptions are reached by driving each vendor's own CLI under its own login, never by reusing its OAuth tokens:
+
+| Tool | Provider package | Runs |
+|---|---|---|
+| `subagent_claude_code` | `@deepseek-ai/dsh-subagent-claude-code` | Claude Agent SDK / Claude Code runtime |
+| `subagent_codex` | `@deepseek-ai/dsh-subagent-codex` | `codex app-server` |
+| `subagent_agy` | `dsh-plugins/dsh-subagent-agy` | `agy --print --output-format json` |
+
+```sh
+dsh plugin --profile web add @deepseek-ai/dsh-subagent-claude-code@0.2.0-rc.2 \
+  @deepseek-ai/dsh-subagent-codex@0.2.0-rc.2 "file:$PWD/dsh-plugins/dsh-subagent-agy"
+scripts/dsh-fleet-preset --profile web        # adds the "fleet" agent preset with all three on
+scripts/dsh-fleet-preset --profile headless   # preset-less profiles get root tool rows
+orchestra-next keys exec -- dsh --profile headless "use subagent_agy to review this repo"
+```
+
+`agy` runs in `review` mode (sandboxed, read-only) by default; `--agy-mode accept-edits|full` widens it. Re-run `dsh-fleet-preset` after upgrading dsh.
 
 ## Console
 

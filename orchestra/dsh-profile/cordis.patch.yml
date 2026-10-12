@@ -1,4 +1,4 @@
-# Canonical Orchestra-next profile for DSH 0.1.2-alpha.3.
+# Canonical Orchestra-next profile for DSH 0.2.0-rc.2.
 - id: session-persistence-jsonl
   config:
     root: !!js process.env.ORCHESTRA_NEXT_DSH_SESSION_ROOT
@@ -28,9 +28,7 @@
   disabled: true
 - id: tool-subagent-fork
   disabled: true
-- id: tool-subagent-report
-  disabled: true
-- id: workflow-worker-thread
+- id: workflow-ptc
   disabled: true
 - id: tool-workflow
   disabled: true
@@ -125,6 +123,17 @@
             contextWindow: 200000
             maxTokens: 131072
             reasoningEfforts: {low: low, medium: medium, high: high}
+      xai:
+        displayName: xAI
+        apiKeyEnv: XAI_API_KEY
+        api: openai-responses
+        baseURL: https://api.x.ai/v1
+        models:
+          - id: grok-4.7
+            name: Grok 4.7
+            contextWindow: 500000
+            maxTokens: 131072
+            reasoningEfforts: {low: low, medium: medium, high: high, xhigh: xhigh}
 
 - id: system-prompt
   config:

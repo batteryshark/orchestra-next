@@ -14,7 +14,7 @@ def send(value):
 
 
 if "--version" in sys.argv:
-    print("dsh 0.1.2-alpha.3")
+    print("dsh 0.2.0-rc.2")
     raise SystemExit(0)
 
 root = Path(os.environ["ORCHESTRA_NEXT_DSH_SESSION_ROOT"])
@@ -30,7 +30,7 @@ next_seq = 0
 def journal_path():
     directory = root / "project" / str(session_id)
     directory.mkdir(parents=True, exist_ok=True)
-    return directory / "session.jsonl"
+    return directory / "session.v4.jsonl"
 
 
 def append(event):
@@ -46,7 +46,7 @@ def ensure_header():
     global next_seq
     path = journal_path()
     if not path.exists():
-        append({"type": "session", "version": 0, "id": session_id,
+        append({"type": "session", "version": 4, "id": session_id,
                 "createdAt": 1, "cwd": os.getcwd(), "delegationDepth": 0})
         return
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
@@ -92,7 +92,7 @@ for line in sys.stdin:
             print("not-json", flush=True)
             continue
         send({"jsonrpc": "2.0", "id": request_id, "result": {
-            "protocolVersion": 1, "agentInfo": {"name": "fake-dsh", "version": "0.1.2-alpha.3"},
+            "protocolVersion": 1, "agentInfo": {"name": "fake-dsh", "version": "0.2.0-rc.2"},
             "agentCapabilities": {"promptCapabilities": {"image": False},
                 "sessionCapabilities": {"close": {}, "list": {}, "resume": {}}}, "authMethods": []}})
     elif method in ("session/new", "session/resume"):

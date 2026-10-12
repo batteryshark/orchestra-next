@@ -15,8 +15,8 @@ class JournalTests(StateCase):
         self.run, _ = runs.submit(self.con, RunRequest.from_mapping({"request_id": "journal", "profile": "fake", "objective": "test", "cwd": str(repo)}))
         self.sessions = self.root / "sessions"
 
-    def write(self, name, rows, torn=None):
-        path = self.sessions / name / "session.jsonl"
+    def write(self, name, rows, torn=None, filename="session.jsonl"):
+        path = self.sessions / name / filename
         path.parent.mkdir(parents=True)
         with path.open("wb") as handle:
             for index, row in enumerate(rows):
@@ -55,6 +55,17 @@ class JournalTests(StateCase):
         self.assertEqual(descendant, "child")
         compact = self.con.execute("SELECT source_seq,event_type,model FROM usage_events WHERE event_type='compaction/summary'").fetchone()
         self.assertEqual(tuple(compact), (2, "compaction/summary", "compact"))  # seq 1 was the skipped chunk
+
+    def test_dsh_02_v4_journal_is_projected(self):
+        self.write("v4", [
+            {"type": "session", "version": 4, "id": "v4", "createdAt": 1, "cwd": str(self.root), "isSeeded": False},
+            {"type": "goal/change", "data": {"kind": "goal/change", "version": 1, "operation": "complete", "goal": {"id": "g4", "revision": 2, "objective": "fixture", "phase": "complete", "maxGoalRounds": 32}, "roundsStarted": 1, "createdAt": 1, "updatedAt": 2}},
+            {"type": "assistant/message", "data": {"turn": 1, "step": 1, "message": {"role": "assistant", "content": [], "source": {"kind": "model", "provider": "openai-codex", "model": "gpt"}}, "usage": {"inputTokens": 5, "outputTokens": 2, "totalTokens": 7}}},
+        ], filename="session.v4.jsonl")
+        result = journal.reconcile(self.con, self.run["id"], self.sessions)
+        self.assertTrue(result["goal_complete"])
+        row = runs.find(self.con, self.run["id"])
+        self.assertEqual((row["goal_state"], row["tokens_total"]), ("complete", 7))
 
     def test_committed_corruption_and_format_version_are_rejected(self):
         self.write("bad", [{"type": "session", "version": 1, "id": "bad"}])

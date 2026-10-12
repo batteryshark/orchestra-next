@@ -3,7 +3,7 @@
   disabled: false
 - id: subagent-spawn-in-process
   disabled: false
-- id: workflow-worker-thread
+- id: workflow-ptc
   disabled: false
 - id: tool-ralph
   disabled: false

@@ -187,7 +187,7 @@ class ExecutionTests(StateCase):
         waiting = runs.find(self.con, run["id"])
         self.assertEqual((waiting["status"], waiting["verification_repairs"],
                           waiting["rounds_started"]), ("waiting", 2, 6))
-        journals = list(paths.run_session_dir(run["id"]).rglob("session.jsonl"))
+        journals = list(paths.run_session_dir(run["id"]).rglob("session.v4.jsonl"))
         self.assertEqual(len(journals), 1)
 
     def test_reroute_records_cache_epoch(self):

@@ -1,0 +1,24 @@
+{
+  "name": "@orchestra-next/dsh-subagent-agy",
+  "description": "One-shot DSH subagent provider that delegates to Google's official Antigravity CLI (agy --print)",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": ["lib/index.js", "cordis.patch.yml"],
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-subagent": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-subprocess": "0.2.0-rc.2",
+    "@deepseek-ai/schemastery": "~3.18.4"
+  }
+}

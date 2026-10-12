@@ -11,6 +11,15 @@ class JournalError(RuntimeError):
     pass
 
 
+# DSH 0.1.x wrote session.jsonl (header version 0); 0.2.x writes
+# session.v4.jsonl (version 4) with the same event and usage shapes.
+JOURNAL_VERSIONS = (0, 4)
+
+
+def session_journals(root: Path) -> list[Path]:
+    return sorted({*root.rglob("session.jsonl"), *root.rglob("session.v4.jsonl")})
+
+
 def _records(path: Path):
     raw = path.read_bytes()
     lines = raw.splitlines(keepends=True)
@@ -58,12 +67,12 @@ def _reconcile(con, run_id: int, root: str | Path) -> dict:
     goal_complete = False
     if not root.exists():
         return {"events": 0, "usage_events": 0, "goal_complete": False}
-    for path in sorted(root.rglob("session.jsonl")):
+    for path in session_journals(root):
         rows = list(_records(path))
         if not rows:
             continue
         _, header = rows[0]
-        if (header.get("type") != "session" or header.get("version") != 0
+        if (header.get("type") != "session" or header.get("version") not in JOURNAL_VERSIONS
                 or not isinstance(header.get("id"), str) or not header["id"]
                 or not isinstance(header.get("createdAt"), int) or header["createdAt"] < 0
                 or not isinstance(header.get("delegationDepth"), int)

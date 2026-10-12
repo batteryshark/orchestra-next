@@ -15,7 +15,7 @@ from pathlib import Path
 
 from orchestra import paths
 
-PINNED_VERSION = "0.1.2-alpha.3"
+PINNED_VERSION = "0.2.0-rc.2"
 PROFILE_NAME = "orchestra-next"
 PROFILE_FILES = ("package.json", "cordis.patch.yml", "ralph.patch.yml")
 
@@ -124,7 +124,41 @@ def write_auth_file(run_id: int, token: str) -> Path:
 
 # OpenCode's auth store is the one place these keys already live on this machine.
 # name in auth.json -> env var the DSH profile patch reads via apiKeyEnv.
-PROVIDER_KEYS = {"meta": "META_API_KEY", "zai": "ZAI_API_KEY"}
+PROVIDER_KEYS = {"meta": "META_API_KEY", "zai": "ZAI_API_KEY", "deepseek": "DEEPSEEK_API_KEY", "xai": "XAI_API_KEY"}
+
+
+def opencode_entries(auth_path: Path) -> dict:
+    """OpenCode's provider entries: auth.json (OpenCode 1.x) when it exists,
+    else the active rows of the ``credential`` table in the opencode.db beside
+    it (OpenCode 2.x). Read-only; a missing or unreadable store is empty."""
+    if auth_path.exists():
+        try:
+            store = json.loads(auth_path.read_text())
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            return {}
+        return store if isinstance(store, dict) else {}
+    db = auth_path.with_name("opencode.db")
+    if not db.exists():
+        return {}
+    import sqlite3
+    entries: dict = {}
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
+        try:
+            rows = con.execute("SELECT integration_id, value FROM credential "
+                               "WHERE active = 1 ORDER BY time_updated").fetchall()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return {}
+    for name, raw in rows:
+        try:
+            entry = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(name, str) and isinstance(entry, dict):
+            entries[name] = entry
+    return entries
 
 
 def provider_keys(auth_path: Path | None = None, codex_path: Path | None = None) -> dict[str, str]:
@@ -133,12 +167,11 @@ def provider_keys(auth_path: Path | None = None, codex_path: Path | None = None)
     # missing or unreadable OpenCode store cannot take the openai-codex route down with it.
     keys = codex_key(codex_path)
     path = auth_path or Path(os.environ.get("ORCHESTRA_NEXT_OPENCODE_AUTH", "~/.local/share/opencode/auth.json")).expanduser()
-    try:
-        store = json.loads(path.read_text())
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        return keys
+    store = opencode_entries(path)
     for name, var in PROVIDER_KEYS.items():
-        key = (store.get(name) or {}).get("key") if isinstance(store, dict) else None
+        # API keys only: an OAuth subscription grant (type "oauth") is never
+        # forwarded as an API key.
+        key = (store.get(name) or {}).get("key")
         if isinstance(key, str) and key:
             keys[var] = key
     return keys
@@ -212,7 +245,7 @@ def launch(run: dict, token: str, provider_env: dict[str, str] | None = None) ->
 
 def catalog(cwd: str) -> dict[tuple[str, str], set[str]]:
     """Read DSH's live ACP model/effort options without making a model call."""
-    from orchestra.acp import Peer
+    from orchestra.acp import AcpError, Peer
     require_version()
     check_profile(require_binary=False)
     with tempfile.TemporaryDirectory(prefix="orchestra-next-dsh-check-") as root:
@@ -247,8 +280,13 @@ def catalog(cwd: str) -> dict[tuple[str, str], set[str]]:
                     provider, model = json.loads(choice["value"])
                 except (KeyError, TypeError, ValueError):
                     continue
-                changed = peer.call("session/set_config_option", {
-                    "sessionId": session_id, "configId": "model", "value": choice["value"]})
+                try:
+                    changed = peer.call("session/set_config_option", {
+                        "sessionId": session_id, "configId": "model", "value": choice["value"]})
+                except AcpError:
+                    # DSH 0.2 can advertise a stale default (e.g. a retired model id
+                    # kept as currentValue) that it then refuses to select.
+                    continue
                 effort_option = next((item for item in (changed.get("configOptions") or [])
                                       if item.get("id") == "reasoning_effort"), None)
                 efforts: set[str] = set()
