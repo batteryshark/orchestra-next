@@ -95,10 +95,10 @@ Migrating from the previous Orchestra: `orchestra-next profiles-import-v2` maps 
 
 ## Local fleet and CLI delegates
 
-`scripts/fleet` (symlink it to `~/.local/bin/fleet`) finds and switches the local services, all user LaunchAgents on loopback:
+`fleet` (now its own project in `~/Projects/workstack/fleet`) finds and switches the local services, all user LaunchAgents on loopback:
 
 ```sh
-fleet                          # status: orchestra (8766), tarmac (8767), dsh-web (3080)
+fleet                          # status: orchestra (8766), tarmac (8767), dsh-web (3080), agy (4517)
 fleet up|down [svc...]         # down stays off across logins
 fleet restart|reinstall [svc...]
 fleet logs <svc> [-f]
